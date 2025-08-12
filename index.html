@@ -6,31 +6,29 @@
 <title>C3C – Interactive 3D Customizer</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;background:#000;color:#fff;font-family:sans-serif}
+html,body{width:100%;height:100%;background:#e9eaee;color:#111;font-family:sans-serif}
 #app{display:flex;height:100vh}
-#ui{width:340px;max-width:340px;min-width:300px;padding:10px;background:#111;overflow:auto}
-#canvasWrap{flex:1;position:relative}
+#ui{width:340px;max-width:340px;min-width:300px;padding:10px;background:#f4f5f7;overflow:auto;border-right:1px solid #dde0e6}
+#canvasWrap{flex:1;position:relative;background:#e9eaee}
 #c{display:block;width:100%;height:100%}
 .row{margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 label{font-size:14px}
-input,select,button{background:#222;color:#fff;border:1px solid #333;padding:6px;border-radius:4px}
+input,select,button{background:#fff;color:#111;border:1px solid #cfd6df;padding:6px;border-radius:4px}
 button{cursor:pointer}
 #decalGallery{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
-#decalGallery button{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:0;overflow:hidden;height:72px}
+#decalGallery button{background:#fff;border:1px solid #cfd6df;border-radius:6px;padding:0;overflow:hidden;height:72px}
 #decalGallery img{width:100%;height:100%;object-fit:contain;background:#fff}
-.note{font-size:12px;opacity:.7}
-#buildTag{position:fixed;left:8px;top:6px;opacity:.85;font:12px/1 monospace;z-index:10}
+.note{font-size:12px;opacity:.75;color:#333}
+#buildTag{position:fixed;left:8px;top:6px;opacity:.85;font:12px/1 monospace;z-index:10;color:#333}
 #errorTag{position:fixed;right:8px;top:6px;background:#b00020;color:#fff;padding:6px 8px;border-radius:6px;display:none;max-width:70ch;font:12px/1.2 monospace;z-index:10}
 .selectedDecal{outline:2px solid #4caf50}
 </style>
 
 <!-- Three core -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
-<!-- DecalGeometry (non‑module) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r12 • initializing…</div>
+<div id="buildTag">Build r13 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -112,6 +110,16 @@ async function ensureDRACO(){ // optional
   ];
   for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.DRACOLoader)||window.DRACOLoader) return; }catch(e){} }
 }
+async function ensureDecalGeometry(){
+  if (THREE.DecalGeometry) return;
+  const urls=[
+    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js',
+    'https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js',
+    'https://unpkg.com/three@0.128.0/examples/js/geometries/DecalGeometry.js'
+  ];
+  for (const u of urls){ try{ await loadScript(u); if(THREE.DecalGeometry) return; }catch(e){} }
+  throw new Error('DecalGeometry missing');
+}
 /* ------------------------------------------- */
 
 let scene,camera,renderer,controls,raycaster,mouse;
@@ -126,7 +134,8 @@ window.onload = () => { (async ()=>{
 
 async function init(){
   const canvas=document.getElementById("c");
-  scene=new THREE.Scene(); scene.background=new THREE.Color(0x000000);
+  scene=new THREE.Scene();
+  scene.background=new THREE.Color(0xe9eaee); // light gray background
 
   camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
   camera.position.set(0, 2, 8); // start back a bit
@@ -135,10 +144,11 @@ async function init(){
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth-340,window.innerHeight);
 
-  const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9); scene.add(hemi);
-  const dir=new THREE.DirectionalLight(0xffffff,1); dir.position.set(5,10,7); scene.add(dir);
+  // lights
+  const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.9); scene.add(hemi);
+  const dir=new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(5,10,7); scene.add(dir);
 
-  // Try to load OrbitControls; else use fallback camera controls
+  // OrbitControls or fallback camera
   await ensureOrbitControls();
   let OC=null;
   if (window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
@@ -171,9 +181,10 @@ async function init(){
     showError('OrbitControls failed to load; using fallback camera (drag to rotate, wheel to zoom).');
   }
 
+  // ground (soft contrast)
   const ground=new THREE.Mesh(
     new THREE.PlaneGeometry(50,50),
-    new THREE.MeshStandardMaterial({color:0x222222,roughness:1})
+    new THREE.MeshStandardMaterial({color:0xdfe3ea,roughness:1})
   );
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.01; scene.add(ground);
 
@@ -187,7 +198,7 @@ async function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  buildTag.textContent = `Build r12 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r13 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 /* === Fit camera to the loaded model === */
@@ -215,7 +226,6 @@ function fitCameraToObject(obj, offset=1.6){
   }
   camera.updateProjectionMatrix();
 }
-/* ===================================== */
 
 function setupUI(){
   const vs=document.getElementById("vehicleSelect");
@@ -251,8 +261,8 @@ function setupUI(){
     const reader=new FileReader();
     reader.onload=ev=>{
       decalTextureURL=ev.target.result;
-      if(lastBtn) lastBtn.classList.remove('selectedDecal');
-      lastBtn=null;
+      // clear selection highlight
+      document.querySelectorAll('#decalGallery .selectedDecal').forEach(b=>b.classList.remove('selectedDecal'));
     };
     reader.readAsDataURL(file);
   });
@@ -300,7 +310,6 @@ async function loadVehicle(url){
       const scale=4.5/Math.max(size.x,size.z||1);
       currentVehicle.scale.setScalar(scale);
 
-      // fit camera!
       fitCameraToObject(currentVehicle, 1.7);
     },undefined,err=>{
       showError("Could not load vehicle model. Check the URL.");
@@ -324,12 +333,12 @@ function applyBodyColor(hex){
   });
 }
 
-function onPointerDown(event){
+async function onPointerDown(event){
   mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
 
-  // 1) Try grabbing an existing decal to drag
+  // drag existing decal?
   const decalHits=raycaster.intersectObjects(decals);
   if(decalHits.length){
     draggingDecal=decalHits[0].object;
@@ -337,8 +346,13 @@ function onPointerDown(event){
     return;
   }
 
-  // 2) Place a new decal if one is selected
+  // place new decal
   if(!decalTextureURL||!currentVehicle)return;
+
+  // make sure DecalGeometry is present (this was your error)
+  try{ await ensureDecalGeometry(); }
+  catch(e){ showError('DecalGeometry missing; decals disabled.'); return; }
+
   const hits=raycaster.intersectObject(currentVehicle,true);
   if(hits.length){
     const hit=hits[0];
@@ -358,35 +372,28 @@ function onPointerMove(event){
   }
 }
 
-/* ---- NEW: place decals against the EXACT mesh with proper orientation ---- */
+/* ---- place decals against the EXACT mesh with proper orientation ---- */
 function addDecalOnHit(hit, texURL){
   if(!THREE.DecalGeometry){ showError('DecalGeometry missing; decals disabled.'); return; }
 
-  const targetMesh = hit.object;                      // <- the exact mesh you clicked
-  const position   = hit.point.clone();               // world position
+  const targetMesh = hit.object;
+  const position   = hit.point.clone();
 
-  // Transform the face normal into world space
   const normal = hit.face.normal.clone();
   normal.transformDirection(new THREE.Matrix3().getNormalMatrix(targetMesh.matrixWorld));
 
-  // Build an orientation (Euler) so the decal faces outward along that normal
   const quat = new THREE.Quaternion().setFromUnitVectors(
-    new THREE.Vector3(0,0,1),                         // decal's +Z axis
-    normal.clone().normalize()
+    new THREE.Vector3(0,0,1), normal.clone().normalize()
   );
   const orientation = new THREE.Euler().setFromQuaternion(quat);
 
-  // Tweakable size (X,Y are width/height of the sticker)
   const size = new THREE.Vector3(0.7, 0.7, 0.01);
 
   const tex = new THREE.TextureLoader().load(texURL);
-  tex.anisotropy = 8; tex.encoding = THREE.sRGBEncoding; // nicer quality
+  tex.anisotropy = 8; tex.encoding = THREE.sRGBEncoding;
 
   const mat = new THREE.MeshStandardMaterial({
-    map: tex,
-    transparent: true,
-    depthTest: true,
-    depthWrite: false
+    map: tex, transparent: true, depthTest: true, depthWrite: false
   });
 
   const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, size);
@@ -394,13 +401,9 @@ function addDecalOnHit(hit, texURL){
   scene.add(mesh);
   decals.push(mesh);
 }
-/* -------------------------------------------------------------------------- */
-
-function addDecal(pos,normal,texURL){ /* kept for safety; unused now */ }
 
 function animate(){
   requestAnimationFrame(animate);
-  if(controls && controls.update) controls.update();
   renderer.render(scene,camera);
 }
 </script>
