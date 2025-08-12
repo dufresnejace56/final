@@ -26,23 +26,23 @@ button{cursor:pointer}
 <!-- Three core -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 
-<!-- OrbitControls (with fallback) -->
+<!-- OrbitControls (with fallback CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js"
         onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js';document.head.appendChild(s)">
 </script>
 
-<!-- GLTFLoader (with fallback) -->
+<!-- GLTFLoader (with fallback CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js"
         onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js';document.head.appendChild(s)">
 </script>
 
-<!-- DecalGeometry (non-module + fallback) -->
+<!-- DecalGeometry (non‑module + fallback) -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"
         onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js';document.head.appendChild(s)">
 </script>
 </head>
 <body>
-<div id="buildTag">Build r6 • initializing…</div>
+<div id="buildTag">Build r7 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -125,15 +125,21 @@ function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,1); dir.position.set(5,10,7); scene.add(dir);
 
-  // Robust OrbitControls setup (works even if CDN hiccups)
-  const OC = (window.THREE && THREE.OrbitControls) || window.OrbitControls;
-  if (typeof OC === 'function') {
+  // ---- OrbitControls robust detection (covers both attachment styles) ----
+  let OC = null;
+  if (window.THREE && typeof THREE.OrbitControls === 'function') {
+    OC = THREE.OrbitControls;              // some builds attach here
+  } else if (typeof window.OrbitControls === 'function') {
+    OC = window.OrbitControls;             // others expose a global
+  }
+  if (OC) {
     controls = new OC(camera, renderer.domElement);
     controls.enableDamping = true;
   } else {
     controls = { update(){} };
     showError('OrbitControls failed to load; continuing without it.');
   }
+  // ------------------------------------------------------------------------
 
   const ground=new THREE.Mesh(
     new THREE.PlaneGeometry(50,50),
@@ -151,8 +157,8 @@ function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  // Debug: prove CONFIG is loaded
-  buildTag.textContent = `Build r6 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  // Debug banner
+  buildTag.textContent = `Build r7 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 function setupUI(){
