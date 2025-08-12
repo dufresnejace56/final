@@ -15,12 +15,12 @@ html,body{width:100%;height:100%;background:#000;color:#fff;font-family:sans-ser
 label{font-size:14px}
 input,select,button{background:#222;color:#fff;border:1px solid #333;padding:6px;border-radius:4px}
 button{cursor:pointer}
-#decalGallery{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-#decalGallery button{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:0;overflow:hidden}
+#decalGallery{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+#decalGallery button{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:0;overflow:hidden;height:72px}
 #decalGallery img{width:100%;height:100%;object-fit:contain;background:#fff}
 .note{font-size:12px;opacity:.7}
 #buildTag{position:fixed;left:8px;top:6px;opacity:.85;font:12px/1 monospace;z-index:10}
-#errorTag{position:fixed;right:8px;top:6px;background:#b00020;color:#fff;padding:6px 8px;border-radius:6px;display:none;max-width:60ch;font:12px/1.2 monospace;z-index:10}
+#errorTag{position:fixed;right:8px;top:6px;background:#b00020;color:#fff;padding:6px 8px;border-radius:6px;display:none;max-width:70ch;font:12px/1.2 monospace;z-index:10}
 </style>
 
 <!-- Three core -->
@@ -42,7 +42,7 @@ button{cursor:pointer}
 </script>
 </head>
 <body>
-<div id="buildTag">Build r7 • initializing…</div>
+<div id="buildTag">Build r8 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -125,21 +125,12 @@ function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,1); dir.position.set(5,10,7); scene.add(dir);
 
-  // ---- OrbitControls robust detection (covers both attachment styles) ----
+  // OrbitControls: handle both attachment styles
   let OC = null;
-  if (window.THREE && typeof THREE.OrbitControls === 'function') {
-    OC = THREE.OrbitControls;              // some builds attach here
-  } else if (typeof window.OrbitControls === 'function') {
-    OC = window.OrbitControls;             // others expose a global
-  }
-  if (OC) {
-    controls = new OC(camera, renderer.domElement);
-    controls.enableDamping = true;
-  } else {
-    controls = { update(){} };
-    showError('OrbitControls failed to load; continuing without it.');
-  }
-  // ------------------------------------------------------------------------
+  if (window.THREE && typeof THREE.OrbitControls === 'function') OC = THREE.OrbitControls;
+  else if (typeof window.OrbitControls === 'function') OC = window.OrbitControls;
+  if (OC) { controls = new OC(camera, renderer.domElement); controls.enableDamping = true; }
+  else { controls = { update(){} }; showError('OrbitControls failed to load; continuing without it.'); }
 
   const ground=new THREE.Mesh(
     new THREE.PlaneGeometry(50,50),
@@ -157,8 +148,7 @@ function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  // Debug banner
-  buildTag.textContent = `Build r7 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r8 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 function setupUI(){
@@ -209,8 +199,11 @@ function clearVehicle(){
 
 function loadVehicle(url){
   clearVehicle();
-  const loader = new THREE.GLTFLoader ? new THREE.GLTFLoader() : null;
-  if(!loader){ showError('GLTFLoader missing'); return; }
+
+  // GLTFLoader: handle both attachment styles (THREE or global)
+  const GLTF = (window.THREE && THREE.GLTFLoader) || window.GLTFLoader;
+  if(!GLTF){ showError('GLTFLoader missing; cannot load models.'); return; }
+  const loader = new GLTF();
 
   loader.load(url,gltf=>{
     currentVehicle=gltf.scene;
@@ -236,9 +229,7 @@ function applyBodyColor(hex){
       const mats=Array.isArray(obj.material)?obj.material:[obj.material];
       mats.forEach(m=>{
         const match=hints.some(h=>m.name&&m.name.toLowerCase().includes(h));
-        if(hints.length===0||match){
-          m.color?.set(hex); m.needsUpdate=true;
-        }
+        if(hints.length===0||match){ m.color?.set(hex); m.needsUpdate=true; }
       });
     }
   });
@@ -277,11 +268,10 @@ function onPointerMove(event){
 }
 
 function addDecal(pos,normal,texURL){
-  if(!THREE.DecalGeometry){ showError('DecalGeometry missing; decals disabled'); return; }
+  if(!THREE.DecalGeometry){ showError('DecalGeometry missing; decals disabled.'); return; }
   const size=new THREE.Vector3(0.6,0.6,0.01);
-  const texLoader=new THREE.TextureLoader();
   const mat=new THREE.MeshStandardMaterial({
-    map: texLoader.load(texURL),
+    map: new THREE.TextureLoader().load(texURL),
     transparent:true, depthTest:true, depthWrite:false
   });
   const target=currentVehicle||scene;
@@ -299,5 +289,3 @@ function animate(){
 </script>
 </body>
 </html>
-
-
