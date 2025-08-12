@@ -31,7 +31,7 @@ button{cursor:pointer}
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r4 • initializing…</div>
+<div id="buildTag">Build r5 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -90,12 +90,15 @@ let decalTextureURL=null;
 let decals=[];
 let draggingDecal=null, dragOffset=null;
 
-try {
-  init();
-  animate();
-} catch (e) {
-  showError('Init error: '+e.message);
-}
+// Start AFTER page loads, with error guard
+window.onload = () => {
+  try {
+    init();
+    animate();
+  } catch (e) {
+    showError('Init error: ' + e.message);
+  }
+};
 
 function init(){
   const canvas=document.getElementById("c");
@@ -107,4 +110,169 @@ function init(){
 
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setS
+  renderer.setSize(window.innerWidth-340,window.innerHeight);
+
+  const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9); scene.add(hemi);
+  const dir=new THREE.DirectionalLight(0xffffff,1); dir.position.set(5,10,7); scene.add(dir);
+
+  controls=new THREE.OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true;
+
+  const ground=new THREE.Mesh(
+    new THREE.PlaneGeometry(50,50),
+    new THREE.MeshStandardMaterial({color:0x222222,roughness:1})
+  );
+  ground.rotation.x=-Math.PI/2; ground.position.y=-0.01; scene.add(ground);
+
+  raycaster=new THREE.Raycaster();
+  mouse=new THREE.Vector2();
+
+  setupUI();
+
+  window.addEventListener("resize",onResize);
+  renderer.domElement.addEventListener("pointerdown",onPointerDown);
+  renderer.domElement.addEventListener("pointermove",onPointerMove);
+  renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
+
+  // Debug: prove CONFIG is loaded
+  console.log('Vehicles:', CONFIG.vehicles);
+  console.log('Decals:', CONFIG.decals);
+  buildTag.textContent = `Build r5 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+}
+
+function setupUI(){
+  const vs=document.getElementById("vehicleSelect");
+  vs.innerHTML="";
+  CONFIG.vehicles.forEach(v=>{
+    const opt=document.createElement("option");
+    opt.value=v.url; opt.textContent=v.name; vs.appendChild(opt);
+  });
+  vs.addEventListener("change",()=>loadVehicle(vs.value));
+  if(CONFIG.vehicles.length){
+    loadVehicle(CONFIG.vehicles[0].url);
+    vs.value=CONFIG.vehicles[0].url;
+  }
+
+  const gallery=document.getElementById("decalGallery");
+  gallery.innerHTML="";
+  CONFIG.decals.forEach(url=>{
+    const btn=document.createElement("button");
+    const img=document.createElement("img");
+    img.src=url; btn.appendChild(img);
+    btn.addEventListener("click",()=>{decalTextureURL=url});
+    gallery.appendChild(btn);
+  });
+
+  document.getElementById("decalUpload").addEventListener("change",e=>{
+    const file=e.target.files[0]; if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{decalTextureURL=ev.target.result};
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("applyColorBtn").addEventListener("click",()=>{
+    applyBodyColor(document.getElementById("bodyColor").value);
+  });
+}
+
+function onResize(){
+  const w=window.innerWidth-340,h=window.innerHeight;
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w,h);
+}
+
+function clearVehicle(){
+  if(currentVehicle)scene.remove(currentVehicle);
+  currentVehicle=null;
+}
+
+function loadVehicle(url){
+  clearVehicle();
+  const loader=new THREE.GLTFLoader();
+  loader.load(url,gltf=>{
+    currentVehicle=gltf.scene;
+    scene.add(currentVehicle);
+
+    const box=new THREE.Box3().setFromObject(currentVehicle);
+    const size=new THREE.Vector3(); box.getSize(size);
+    const center=new THREE.Vector3(); box.getCenter(center);
+    currentVehicle.position.sub(center);
+
+    const scale=4.5/Math.max(size.x,size.z || 1);
+    currentVehicle.scale.setScalar(scale);
+  },undefined,err=>{
+    showError("Could not load vehicle model. Check the URL.");
+  });
+}
+
+function applyBodyColor(hex){
+  if(!currentVehicle)return;
+  const hints=CONFIG.bodyMaterialNameIncludes.map(h=>h.toLowerCase());
+  currentVehicle.traverse(obj=>{
+    if(obj.isMesh&&obj.material){
+      const mats=Array.isArray(obj.material)?obj.material:[obj.material];
+      mats.forEach(m=>{
+        const match=hints.some(h=>m.name&&m.name.toLowerCase().includes(h));
+        if(hints.length===0||match){
+          m.color?.set(hex);
+          m.needsUpdate=true;
+        }
+      });
+    }
+  });
+}
+
+function onPointerDown(event){
+  mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
+  mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+
+  const decalHits=raycaster.intersectObjects(decals);
+  if(decalHits.length){
+    draggingDecal=decalHits[0].object;
+    dragOffset=draggingDecal.position.clone().sub(decalHits[0].point);
+    return;
+  }
+
+  if(!decalTextureURL||!currentVehicle)return;
+  const hits=raycaster.intersectObject(currentVehicle,true);
+  if(hits.length){
+    const hit=hits[0];
+    addDecal(hit.point,hit.face.normal,decalTextureURL);
+  }
+}
+
+function onPointerMove(event){
+  if(!draggingDecal)return;
+  mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
+  mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits=raycaster.intersectObject(currentVehicle,true);
+  if(hits.length){
+    const hit=hits[0];
+    draggingDecal.position.copy(hit.point.add(dragOffset||new THREE.Vector3()));
+  }
+}
+
+function addDecal(pos,normal,texURL){
+  const size=new THREE.Vector3(0.6,0.6,0.01);
+  const texLoader=new THREE.TextureLoader();
+  const mat=new THREE.MeshStandardMaterial({
+    map: texLoader.load(texURL),
+    transparent:true, depthTest:true, depthWrite:false
+  });
+  const target=currentVehicle||scene;
+  const geo=new THREE.DecalGeometry(target,pos,normal,new THREE.Euler(),size);
+  const mesh=new THREE.Mesh(geo,mat);
+  scene.add(mesh);
+  decals.push(mesh);
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
