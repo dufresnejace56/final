@@ -24,11 +24,10 @@ button{cursor:pointer}
 .selectedDecal{outline:2px solid #4caf50}
 </style>
 
-<!-- Three core -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r13 • initializing…</div>
+<div id="buildTag">Build r14 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -73,7 +72,8 @@ const CONFIG = {
     "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
     "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
   ],
-  bodyMaterialNameIncludes:["Body","Paint","Carpaint"]
+  // names that probably belong to the painted body
+  bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body"]
 };
 /* ================================= */
 
@@ -83,50 +83,46 @@ function showError(msg){ errorTag.style.display='block'; errorTag.textContent = 
 
 /* ---------- dynamic script loaders ---------- */
 function loadScript(url){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=url;s.onload=res;s.onerror=()=>rej(new Error('load '+url));document.head.appendChild(s);});}
+async function ensure(urls, test){
+  if (test()) return;
+  for (const u of urls){ try{ await loadScript(u); if (test()) return; }catch(e){} }
+  throw new Error('failed to load '+urls[0]);
+}
 async function ensureOrbitControls(){
-  if ((window.THREE && THREE.OrbitControls) || window.OrbitControls) return;
-  const urls=[
+  await ensure([
     'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
     'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js',
     'https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js'
-  ];
-  for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.OrbitControls)||window.OrbitControls) return; }catch(e){} }
+  ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
 }
 async function ensureGLTFLoader(){
-  if ((window.THREE && THREE.GLTFLoader) || window.GLTFLoader) return;
-  const urls=[
+  await ensure([
     'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
     'https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js',
     'https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js'
-  ];
-  for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.GLTFLoader)||window.GLTFLoader) return; }catch(e){} }
-  throw new Error('GLTFLoader missing');
+  ], ()=> (window.THREE && THREE.GLTFLoader) || window.GLTFLoader );
 }
-async function ensureDRACO(){ // optional
-  if ((window.THREE && THREE.DRACOLoader) || window.DRACOLoader) return;
-  const urls=[
+async function ensureDRACO(){
+  await ensure([
     'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js',
     'https://unpkg.com/three@0.159.0/examples/js/loaders/DRACOLoader.js'
-  ];
-  for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.DRACOLoader)||window.DRACOLoader) return; }catch(e){} }
+  ], ()=> (window.THREE && THREE.DRACOLoader) || window.DRACOLoader ).catch(()=>{});
 }
 async function ensureDecalGeometry(){
-  if (THREE.DecalGeometry) return;
-  const urls=[
+  await ensure([
     'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js',
     'https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js',
     'https://unpkg.com/three@0.128.0/examples/js/geometries/DecalGeometry.js'
-  ];
-  for (const u of urls){ try{ await loadScript(u); if(THREE.DecalGeometry) return; }catch(e){} }
-  throw new Error('DecalGeometry missing');
+  ], ()=> THREE.DecalGeometry );
 }
 /* ------------------------------------------- */
 
 let scene,camera,renderer,controls,raycaster,mouse;
 let currentVehicle=null,decalTextureURL=null;
 let decals=[], draggingDecal=null, dragOffset=null;
+let vehicleMaxSize=5; // updated after each load
 
-// Start AFTER page loads
+// Start
 window.onload = () => { (async ()=>{
   try { await init(); animate(); }
   catch (e) { showError('Init error: ' + e.message); }
@@ -135,29 +131,28 @@ window.onload = () => { (async ()=>{
 async function init(){
   const canvas=document.getElementById("c");
   scene=new THREE.Scene();
-  scene.background=new THREE.Color(0xe9eaee); // light gray background
+  scene.background=new THREE.Color(0xe9eaee);
 
   camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
-  camera.position.set(0, 2, 8); // start back a bit
+  camera.position.set(0, 2, 8);
 
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth-340,window.innerHeight);
+  if (renderer.outputColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  // lights
   const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(5,10,7); scene.add(dir);
 
-  // OrbitControls or fallback camera
-  await ensureOrbitControls();
+  await ensureOrbitControls().catch(()=>{});
   let OC=null;
   if (window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
   else if (typeof window.OrbitControls==='function') OC=window.OrbitControls;
-
   if (OC){
     controls=new OC(camera,renderer.domElement);
     controls.enableDamping=true;
   }else{
+    // simple fallback camera
     let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=8,target=new THREE.Vector3(0,0,0);
     function updateCam(){
       const x=target.x+dist*Math.cos(phi)*Math.sin(theta);
@@ -181,12 +176,11 @@ async function init(){
     showError('OrbitControls failed to load; using fallback camera (drag to rotate, wheel to zoom).');
   }
 
-  // ground (soft contrast)
   const ground=new THREE.Mesh(
     new THREE.PlaneGeometry(50,50),
     new THREE.MeshStandardMaterial({color:0xdfe3ea,roughness:1})
   );
-  ground.rotation.x=-Math.PI/2; ground.position.y=-0.01; scene.add(ground);
+  ground.rotation.x=-Math.PI/2; ground.position.y=0; scene.add(ground);
 
   raycaster=new THREE.Raycaster();
   mouse=new THREE.Vector2();
@@ -198,17 +192,17 @@ async function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  buildTag.textContent = `Build r13 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r14 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
-/* === Fit camera to the loaded model === */
+/* ===== Fit camera ===== */
 function fitCameraToObject(obj, offset=1.6){
   const box = new THREE.Box3().setFromObject(obj);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
+  vehicleMaxSize = Math.max(size.x, size.y, size.z);
 
-  const maxSize = Math.max(size.x, size.y, size.z);
-  const fitHeight = maxSize / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  const fitHeight = vehicleMaxSize / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
   const fitWidth  = fitHeight / camera.aspect;
   const distance  = offset * Math.max(fitHeight, fitWidth);
 
@@ -227,6 +221,7 @@ function fitCameraToObject(obj, offset=1.6){
   camera.updateProjectionMatrix();
 }
 
+/* ===== UI ===== */
 function setupUI(){
   const vs=document.getElementById("vehicleSelect");
   vs.innerHTML="";
@@ -250,8 +245,7 @@ function setupUI(){
     btn.addEventListener("click",()=>{
       decalTextureURL=url;
       if(lastBtn) lastBtn.classList.remove('selectedDecal');
-      btn.classList.add('selectedDecal');
-      lastBtn=btn;
+      btn.classList.add('selectedDecal'); lastBtn=btn;
     });
     gallery.appendChild(btn);
   });
@@ -261,7 +255,6 @@ function setupUI(){
     const reader=new FileReader();
     reader.onload=ev=>{
       decalTextureURL=ev.target.result;
-      // clear selection highlight
       document.querySelectorAll('#decalGallery .selectedDecal').forEach(b=>b.classList.remove('selectedDecal'));
     };
     reader.readAsDataURL(file);
@@ -278,19 +271,15 @@ function onResize(){
   renderer.setSize(w,h);
 }
 
-function clearVehicle(){
-  if(currentVehicle)scene.remove(currentVehicle);
-  currentVehicle=null;
-}
-
+/* ===== Load/position vehicle (fix ‘half under floor’) ===== */
 async function loadVehicle(url){
-  clearVehicle();
+  if(currentVehicle) scene.remove(currentVehicle);
+  currentVehicle=null;
+
   try{
-    await ensureGLTFLoader();
-    await ensureDRACO(); // optional
+    await ensureGLTFLoader(); await ensureDRACO();
     const GLTF=(window.THREE&&THREE.GLTFLoader)||window.GLTFLoader;
     const loader=new GLTF();
-
     const DRACO=(window.THREE&&THREE.DRACOLoader)||window.DRACOLoader;
     if(DRACO){
       const dl=new DRACO();
@@ -298,17 +287,22 @@ async function loadVehicle(url){
       if (loader.setDRACOLoader) loader.setDRACOLoader(dl);
     }
 
-    loader.load(url,gltf=>{
+    loader.load(url,(gltf)=>{
       currentVehicle=gltf.scene;
       scene.add(currentVehicle);
 
-      // normalize & scale to a consistent size
-      const box=new THREE.Box3().setFromObject(currentVehicle);
-      const size=new THREE.Vector3(); box.getSize(size);
-      const center=new THREE.Vector3(); box.getCenter(center);
-      currentVehicle.position.sub(center);
-      const scale=4.5/Math.max(size.x,size.z||1);
+      // normalize to consistent size
+      const box0=new THREE.Box3().setFromObject(currentVehicle);
+      const size0=new THREE.Vector3(); box0.getSize(size0);
+      const center0=new THREE.Vector3(); box0.getCenter(center0);
+      currentVehicle.position.sub(center0);
+
+      const scale=4.5/Math.max(size0.x, size0.z || 1);
       currentVehicle.scale.setScalar(scale);
+
+      // after scaling, align lowest point to y=0 (so wheels sit on ground)
+      const box1=new THREE.Box3().setFromObject(currentVehicle);
+      currentVehicle.position.y -= box1.min.y;
 
       fitCameraToObject(currentVehicle, 1.7);
     },undefined,err=>{
@@ -319,26 +313,44 @@ async function loadVehicle(url){
   }
 }
 
+/* ===== Paint body color (works even if the mesh had a texture) ===== */
 function applyBodyColor(hex){
   if(!currentVehicle)return;
-  const hints=CONFIG.bodyMaterialNameIncludes.map(h=>h.toLowerCase());
+  const hints=CONFIG.bodyMaterialNameIncludes;
+  const hexColor=new THREE.Color(hex);
+
   currentVehicle.traverse(obj=>{
-    if(obj.isMesh&&obj.material){
-      const mats=Array.isArray(obj.material)?obj.material:[obj.material];
-      mats.forEach(m=>{
-        const match=hints.some(h=>m.name&&m.name.toLowerCase().includes(h));
-        if(hints.length===0||match){ m.color?.set(hex); m.needsUpdate=true; }
-      });
-    }
+    if(!obj.isMesh || !obj.material) return;
+    const mats = Array.isArray(obj.material)?obj.material:[obj.material];
+
+    mats.forEach((m,i)=>{
+      const name=(m.name||'').toLowerCase();
+      const looksLikeBody = hints.some(h=> name.includes(h));
+      // Heuristic: also color big exterior shells (lots of vertices)
+      const bigMesh = (obj.geometry && obj.geometry.attributes && obj.geometry.attributes.position && obj.geometry.attributes.position.count > 5000);
+
+      if(looksLikeBody || bigMesh){
+        const clone = m.clone();
+        clone.color = hexColor.clone();
+        // show pure color even if original had a texture
+        clone.map = null;
+        clone.metalness = (m.metalness!==undefined? m.metalness : 0.1);
+        clone.roughness = (m.roughness!==undefined? m.roughness : 0.45);
+        clone.needsUpdate = true;
+        if(Array.isArray(obj.material)) obj.material[i]=clone; else obj.material=clone;
+      }
+    });
   });
 }
 
+/* ===== Interaction (place & drag decals) ===== */
+renderer?.domElement?.addEventListener; // keep linter happy
 async function onPointerDown(event){
   mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
 
-  // drag existing decal?
+  // grab existing decal?
   const decalHits=raycaster.intersectObjects(decals);
   if(decalHits.length){
     draggingDecal=decalHits[0].object;
@@ -346,12 +358,10 @@ async function onPointerDown(event){
     return;
   }
 
-  // place new decal
+  // place a new one
   if(!decalTextureURL||!currentVehicle)return;
 
-  // make sure DecalGeometry is present (this was your error)
-  try{ await ensureDecalGeometry(); }
-  catch(e){ showError('DecalGeometry missing; decals disabled.'); return; }
+  try{ await ensureDecalGeometry(); }catch(e){ showError('DecalGeometry missing; decals disabled.'); return; }
 
   const hits=raycaster.intersectObject(currentVehicle,true);
   if(hits.length){
@@ -372,28 +382,39 @@ function onPointerMove(event){
   }
 }
 
-/* ---- place decals against the EXACT mesh with proper orientation ---- */
+/* ---- Decal placement: robust, visible, CORS‑safe ---- */
 function addDecalOnHit(hit, texURL){
-  if(!THREE.DecalGeometry){ showError('DecalGeometry missing; decals disabled.'); return; }
-
   const targetMesh = hit.object;
   const position   = hit.point.clone();
 
+  // world-space normal
   const normal = hit.face.normal.clone();
   normal.transformDirection(new THREE.Matrix3().getNormalMatrix(targetMesh.matrixWorld));
 
-  const quat = new THREE.Quaternion().setFromUnitVectors(
-    new THREE.Vector3(0,0,1), normal.clone().normalize()
-  );
+  // orientation so +Z faces out
+  const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), normal.clone().normalize());
   const orientation = new THREE.Euler().setFromQuaternion(quat);
 
-  const size = new THREE.Vector3(0.7, 0.7, 0.01);
+  // size relative to car size (so it’s never microscopic)
+  const s = Math.max(0.2, vehicleMaxSize * 0.12); // ~12% of car length
+  const size = new THREE.Vector3(s, s, 0.01);
 
-  const tex = new THREE.TextureLoader().load(texURL);
-  tex.anisotropy = 8; tex.encoding = THREE.sRGBEncoding;
+  const loader = new THREE.TextureLoader();
+  loader.setCrossOrigin('anonymous');
+  const tex = loader.load(texURL);
+  if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace; // nice colors
+  tex.anisotropy = 8;
 
   const mat = new THREE.MeshStandardMaterial({
-    map: tex, transparent: true, depthTest: true, depthWrite: false
+    map: tex,
+    color: 0xffffff,
+    transparent: true,
+    opacity: 1,
+    depthTest: true,
+    depthWrite: false,
+    polygonOffset: true,          // avoid z-fighting
+    polygonOffsetFactor: -0.1,
+    side: THREE.DoubleSide
   });
 
   const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, size);
@@ -402,6 +423,7 @@ function addDecalOnHit(hit, texURL){
   decals.push(mesh);
 }
 
+/* ===== Loop ===== */
 function animate(){
   requestAnimationFrame(animate);
   renderer.render(scene,camera);
