@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>C3C – Interactive 3D Customizer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;background:#000;color:#fff;font-family:sans-serif}
+#app{display:flex;height:100vh}
+#ui{width:340px;max-width:340px;min-width:300px;padding:10px;background:#111;overflow:auto}
+#canvasWrap{flex:1;position:relative}
+#c{display:block;width:100%;height:100%}
+.row{margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+label{font-size:14px}
+input,select,button{
+  background:#222;color:#fff;border:1px solid #333;
+  padding:6px;border-radius:4px
+}
+button{cursor:pointer}
+#decalGallery{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+#decalGallery button{
+  background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:0;overflow:hidden
+}
+#decalGallery img{width:100%;height:100%;object-fit:contain;background:#fff}
+.note{font-size:12px;opacity:0.7}
+</style>
+
+<!-- Three.js & loaders -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/geometries/DecalGeometry.js"></script>
+</head>
+<body>
+<div id="app">
+  <div id="ui">
+    <div class="row">
+      <label for="vehicleSelect">Vehicle:</label>
+      <select id="vehicleSelect"></select>
+    </div>
+    <div class="row">
+      <label for="bodyColor">Body Color:</label>
+      <input type="color" id="bodyColor" value="#1c4cff">
+      <button id="applyColorBtn">Apply</button>
+    </div>
+    <div class="row">
+      <label>Decals (click to select):</label>
+      <div id="decalGallery"></div>
+    </div>
+    <div class="row">
+      <label for="decalUpload">Upload your decal:</label>
+      <input type="file" id="decalUpload" accept="image/*">
+    </div>
+    <div class="note">Click on the vehicle to place the selected decal. Drag decals to move them.</div>
+  </div>
+  <div id="canvasWrap"><canvas id="c"></canvas></div>
+</div>
+
+<script>
+/* CONFIG with your URLs */
+const CONFIG = {
+  vehicles: [
+    { name:"Durango", url:"https://static.wixstatic.com/3d/96cc34_c0072ed49aab4a86b58e8856adc9e80d.glb" },
+    { name:"Explorer", url:"https://static.wixstatic.com/3d/96cc34_3939af3ce6774519b08ad2e38484e5c4.glb" },
+    { name:"Mercedes (Ambulance)", url:"https://static.wixstatic.com/3d/96cc34_0c50d7869b59405f8c57e9c69e1581c9.glb" },
+    { name:"Tahoe", url:"https://static.wixstatic.com/3d/96cc34_2de4a869c4c24779a56439d7dfc02f95.glb" }
+  ],
+  decals: [
+    "https://static.wixstatic.com/media/96cc34_45d6c4ae8e19430bb0f853a313752d6e~mv2.png",
+    "https://static.wixstatic.com/media/96cc34_3b6ee3d5d22046269faa3f0abfa5be4b~mv2.png",
+    "https://static.wixstatic.com/media/96cc34_02a7f12787d94a338b71cbc076c131ef~mv2.png",
+    "https://static.wixstatic.com/media/96cc34_d3aae6ee15ea45b99d31d20148e73144~mv2.png",
+    "https://static.wixstatic.com/media/96cc34_738b9da24fef4290b6e3ae9996a8e722~mv2.png",
+    "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
+    "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
+  ],
+  bodyMaterialNameIncludes:["Body","Paint","Carpaint"]
+};
+
+let scene,camera,renderer,controls,raycaster,mouse;
+let currentVehicle=null;
+let decalTextureURL=null;
+let decals=[];
+let draggingDecal=null, dragOffset=null;
+
+init();
+animate();
+
+function init(){
+  const canvas=document.getElementById("c");
+  scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x000000);
+
+  camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
+  camera.position.set(3.5,1.8,5);
+
+  renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth-340,window.innerHeight);
+
+  const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9);
+  scene.add(hemi);
+  const dir=new THREE.DirectionalLight(0xffffff,1);
+  dir.position.set(5,10,7);
+  scene.add(dir);
+
+  controls=new THREE.OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true;
+
+  const ground=new THREE.Mesh(
+    new THREE.PlaneGeometry(50,50),
+    new THREE.MeshStandardMaterial({color:0x222222,roughness:1})
+  );
+  ground.rotation.x=-Math.PI/2;
+  ground.position.y=-0.01;
+  scene.add(ground);
+
+  raycaster=new THREE.Raycaster();
+  mouse=new THREE.Vector2();
+
+  setupUI();
+
+  window.addEventListener("resize",onResize);
+  renderer.domElement.addEventListener("pointerdown",onPointerDown);
+  renderer.domElement.addEventListener("pointermove",onPointerMove);
+  renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
+}
+
+function setupUI(){
+  const vs=document.getElementById("vehicleSelect");
+  CONFIG.vehicles.forEach(v=>{
+    const opt=document.createElement("option");
+    opt.value=v.url; opt.textContent=v.name; vs.appendChild(opt);
+  });
+  vs.addEventListener("change",()=>loadVehicle(vs.value));
+  if(CONFIG.vehicles.length){
+    loadVehicle(CONFIG.vehicles[0].url);
+    vs.value=CONFIG.vehicles[0].url;
+  }
+
+  const gallery=document.getElementById("decalGallery");
+  CONFIG.decals.forEach(url=>{
+    const btn=document.createElement("button");
+    const img=document.createElement("img");
+    img.src=url; btn.appendChild(img);
+    btn.addEventListener("click",()=>{decalTextureURL=url});
+    gallery.appendChild(btn);
+  });
+
+  document.getElementById("decalUpload").addEventListener("change",e=>{
+    const file=e.target.files[0]; if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{decalTextureURL=ev.target.result};
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("applyColorBtn").addEventListener("click",()=>{
+    applyBodyColor(document.getElementById("bodyColor").value);
+  });
+}
+
+function onResize(){
+  const w=window.innerWidth-340,h=window.innerHeight;
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w,h);
+}
+
+function clearVehicle(){
+  if(currentVehicle)scene.remove(currentVehicle);
+  currentVehicle=null;
+}
+
+function loadVehicle(url){
+  clearVehicle();
+  const loader=new THREE.GLTFLoader();
+  loader.load(url,gltf=>{
+    currentVehicle=gltf.scene;
+    scene.add(currentVehicle);
+    const box=new THREE.Box3().setFromObject(currentVehicle);
+    const size=new THREE.Vector3(); box.getSize(size);
+    const center=new THREE.Vector3(); box.getCenter(center);
+    currentVehicle.position.sub(center);
+    const scale=4.5/Math.max(size.x,size.z);
+    currentVehicle.scale.setScalar(scale);
+  });
+}
+
+function applyBodyColor(hex){
+  if(!currentVehicle)return;
+  const hints=CONFIG.bodyMaterialNameIncludes.map(h=>h.toLowerCase());
+  currentVehicle.traverse(obj=>{
+    if(obj.isMesh&&obj.material){
+      const mats=Array.isArray(obj.material)?obj.material:[obj.material];
+      mats.forEach(m=>{
+        const match=hints.some(h=>m.name&&m.name.toLowerCase().includes(h));
+        if(hints.length===0||match){
+          m.color.set(hex);
+        }
+      });
+    }
+  });
+}
+
+function onPointerDown(event){
+  mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
+  mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+
+  const decalHits=raycaster.intersectObjects(decals);
+  if(decalHits.length){
+    draggingDecal=decalHits[0].object;
+    dragOffset=draggingDecal.position.clone().sub(decalHits[0].point);
+    return;
+  }
+
+  if(!decalTextureURL||!currentVehicle)return;
+  const hits=raycaster.intersectObject(currentVehicle,true);
+  if(hits.length){
+    const hit=hits[0];
+    addDecal(hit.point,hit.face.normal,decalTextureURL);
+  }
+}
+
+function onPointerMove(event){
+  if(!draggingDecal)return;
+  mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
+  mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits=raycaster.intersectObject(currentVehicle,true);
+  if(hits.length){
+    const hit=hits[0];
+    draggingDecal.position.copy(hit.point.add(dragOffset||new THREE.Vector3()));
+  }
+}
+
+function addDecal(pos,normal,texURL){
+  const size=new THREE.Vector3(0.6,0.6,0.01);
+  const mat=new THREE.MeshStandardMaterial({
+    map:new THREE.TextureLoader().load(texURL),
+    transparent:true,depthTest:true,depthWrite:false
+  });
+  const target=currentVehicle;
+  const geo=new THREE.DecalGeometry(target,pos,normal,new THREE.Euler(),size);
+  const mesh=new THREE.Mesh(geo,mat);
+  scene.add(mesh);
+  decals.push(mesh);
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
