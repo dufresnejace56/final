@@ -26,23 +26,22 @@ button{cursor:pointer}
 <!-- Three core -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 
-<!-- OrbitControls (with fallback CDN) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js"
-        onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js';document.head.appendChild(s)">
+<!-- OrbitControls (two CDNs) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+if(!window.OrbitControls && !(window.THREE && THREE.OrbitControls)){
+  var s=document.createElement('script');
+  s.src='https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js';
+  document.head.appendChild(s);
+}
 </script>
 
-<!-- GLTFLoader (with fallback CDN) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js"
-        onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js';document.head.appendChild(s)">
-</script>
-
-<!-- DecalGeometry (non‑module + fallback) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"
-        onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js';document.head.appendChild(s)">
-</script>
+<!-- We WILL load GLTFLoader/DRACOLoader dynamically in JS -->
+<!-- DecalGeometry (non‑module) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r8 • initializing…</div>
+<div id="buildTag">Build r9 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -101,14 +100,33 @@ let decalTextureURL=null;
 let decals=[];
 let draggingDecal=null, dragOffset=null;
 
-// Start AFTER page loads, with error guard
+/* Helpers to dynamically load scripts if needed */
+function loadScript(url){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=url;s.onload=res;s.onerror=()=>rej(new Error('load '+url));document.head.appendChild(s);});}
+async function ensureGLTFLoader(){
+  if ((window.THREE && THREE.GLTFLoader) || window.GLTFLoader) return;
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
+    'https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js',
+    // very compatible older build as a last resort:
+    'https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js'
+  ];
+  for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.GLTFLoader)||window.GLTFLoader) return; }catch(e){} }
+  throw new Error('GLTFLoader still missing after attempts');
+}
+async function ensureDRACO(){
+  if ((window.THREE && THREE.DRACOLoader) || window.DRACOLoader) return;
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js',
+    'https://unpkg.com/three@0.159.0/examples/js/loaders/DRACOLoader.js'
+  ];
+  for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.DRACOLoader)||window.DRACOLoader) return; }catch(e){} }
+  // DRACOLoader optional — don’t throw if not available
+}
+
+/* Start AFTER page loads */
 window.onload = () => {
-  try {
-    init();
-    animate();
-  } catch (e) {
-    showError('Init error: ' + e.message);
-  }
+  try { init(); animate(); }
+  catch (e) { showError('Init error: ' + e.message); }
 };
 
 function init(){
@@ -125,17 +143,15 @@ function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,1); dir.position.set(5,10,7); scene.add(dir);
 
-  // OrbitControls: handle both attachment styles
+  // OrbitControls robust detection
   let OC = null;
   if (window.THREE && typeof THREE.OrbitControls === 'function') OC = THREE.OrbitControls;
   else if (typeof window.OrbitControls === 'function') OC = window.OrbitControls;
   if (OC) { controls = new OC(camera, renderer.domElement); controls.enableDamping = true; }
   else { controls = { update(){} }; showError('OrbitControls failed to load; continuing without it.'); }
 
-  const ground=new THREE.Mesh(
-    new THREE.PlaneGeometry(50,50),
-    new THREE.MeshStandardMaterial({color:0x222222,roughness:1})
-  );
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(50,50),
+    new THREE.MeshStandardMaterial({color:0x222222,roughness:1}));
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.01; scene.add(ground);
 
   raycaster=new THREE.Raycaster();
@@ -148,7 +164,7 @@ function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  buildTag.textContent = `Build r8 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r9 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 function setupUI(){
@@ -197,28 +213,43 @@ function clearVehicle(){
   currentVehicle=null;
 }
 
-function loadVehicle(url){
+async function loadVehicle(url){
   clearVehicle();
+  try{
+    await ensureGLTFLoader();
+    await ensureDRACO(); // optional
 
-  // GLTFLoader: handle both attachment styles (THREE or global)
-  const GLTF = (window.THREE && THREE.GLTFLoader) || window.GLTFLoader;
-  if(!GLTF){ showError('GLTFLoader missing; cannot load models.'); return; }
-  const loader = new GLTF();
+    // resolve constructor from either THREE or global
+    const GLTF = (window.THREE && THREE.GLTFLoader) || window.GLTFLoader;
+    const loader = new GLTF();
 
-  loader.load(url,gltf=>{
-    currentVehicle=gltf.scene;
-    scene.add(currentVehicle);
+    // attach DRACO if available
+    const DRACO = (window.THREE && THREE.DRACOLoader) || window.DRACOLoader;
+    if (DRACO) {
+      const dracoLoader = new DRACO();
+      // use Google-hosted decoders compatible with most builds
+      dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+      loader.setDRACOLoader(dracoLoader);
+    }
 
-    const box=new THREE.Box3().setFromObject(currentVehicle);
-    const size=new THREE.Vector3(); box.getSize(size);
-    const center=new THREE.Vector3(); box.getCenter(center);
-    currentVehicle.position.sub(center);
+    loader.load(url,gltf=>{
+      currentVehicle=gltf.scene;
+      scene.add(currentVehicle);
 
-    const scale=4.5/Math.max(size.x,size.z || 1);
-    currentVehicle.scale.setScalar(scale);
-  },undefined,err=>{
-    showError("Could not load vehicle model. Check the URL.");
-  });
+      const box=new THREE.Box3().setFromObject(currentVehicle);
+      const size=new THREE.Vector3(); box.getSize(size);
+      const center=new THREE.Vector3(); box.getCenter(center);
+      currentVehicle.position.sub(center);
+
+      const scale=4.5/Math.max(size.x,size.z || 1);
+      currentVehicle.scale.setScalar(scale);
+    },undefined,err=>{
+      showError("Could not load vehicle model. Check the URL.");
+    });
+
+  }catch(e){
+    showError('GLTFLoader missing; cannot load models.');
+  }
 }
 
 function applyBodyColor(hex){
