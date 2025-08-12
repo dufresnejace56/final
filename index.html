@@ -24,6 +24,7 @@ button{cursor:pointer}
 }
 #decalGallery img{width:100%;height:100%;object-fit:contain;background:#fff}
 .note{font-size:12px;opacity:0.7}
+#buildTag{position:fixed;left:8px;top:6px;opacity:.6;font:12px/1 monospace}
 </style>
 
 <!-- Three.js & loaders -->
@@ -33,6 +34,7 @@ button{cursor:pointer}
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/geometries/DecalGeometry.js"></script>
 </head>
 <body>
+<div id="buildTag">Build r2</div>
 <div id="app">
   <div id="ui">
     <div class="row">
@@ -58,7 +60,7 @@ button{cursor:pointer}
 </div>
 
 <script>
-/* CONFIG with your URLs */
+/* ===== CONFIG (YOUR LINKS WIRED IN) ===== */
 const CONFIG = {
   vehicles: [
     { name:"Durango", url:"https://static.wixstatic.com/3d/96cc34_c0072ed49aab4a86b58e8856adc9e80d.glb" },
@@ -77,7 +79,7 @@ const CONFIG = {
   ],
   bodyMaterialNameIncludes:["Body","Paint","Carpaint"]
 };
-</script>
+/* ======================================== */
 
 let scene,camera,renderer,controls,raycaster,mouse;
 let currentVehicle=null;
@@ -130,6 +132,8 @@ function init(){
 
 function setupUI(){
   const vs=document.getElementById("vehicleSelect");
+  // Clear and repopulate to avoid duplicates on hot reloads
+  vs.innerHTML="";
   CONFIG.vehicles.forEach(v=>{
     const opt=document.createElement("option");
     opt.value=v.url; opt.textContent=v.name; vs.appendChild(opt);
@@ -141,6 +145,7 @@ function setupUI(){
   }
 
   const gallery=document.getElementById("decalGallery");
+  gallery.innerHTML="";
   CONFIG.decals.forEach(url=>{
     const btn=document.createElement("button");
     const img=document.createElement("img");
@@ -184,6 +189,9 @@ function loadVehicle(url){
     currentVehicle.position.sub(center);
     const scale=4.5/Math.max(size.x,size.z);
     currentVehicle.scale.setScalar(scale);
+  },undefined,err=>{
+    console.error("GLB load error:",err);
+    alert("Could not load vehicle model. Check the URL.");
   });
 }
 
@@ -196,7 +204,8 @@ function applyBodyColor(hex){
       mats.forEach(m=>{
         const match=hints.some(h=>m.name&&m.name.toLowerCase().includes(h));
         if(hints.length===0||match){
-          m.color.set(hex);
+          m.color?.set(hex);
+          m.needsUpdate=true;
         }
       });
     }
@@ -256,4 +265,3 @@ function animate(){
 </script>
 </body>
 </html>
-
