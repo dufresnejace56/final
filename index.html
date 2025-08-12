@@ -25,12 +25,11 @@ button{cursor:pointer}
 
 <!-- Three core -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
-
 <!-- DecalGeometry (non‑module) -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r10 • initializing…</div>
+<div id="buildTag">Build r11 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -85,9 +84,7 @@ function showError(msg){ errorTag.style.display='block'; errorTag.textContent = 
 
 /* ---------- dynamic script loaders ---------- */
 function loadScript(url){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=url;s.onload=res;s.onerror=()=>rej(new Error('load '+url));document.head.appendChild(s);});}
-
 async function ensureOrbitControls(){
-  // try both attachment styles and multiple CDNs
   if ((window.THREE && THREE.OrbitControls) || window.OrbitControls) return;
   const urls=[
     'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
@@ -96,7 +93,6 @@ async function ensureOrbitControls(){
   ];
   for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.OrbitControls)||window.OrbitControls) return; }catch(e){} }
 }
-
 async function ensureGLTFLoader(){
   if ((window.THREE && THREE.GLTFLoader) || window.GLTFLoader) return;
   const urls=[
@@ -107,7 +103,6 @@ async function ensureGLTFLoader(){
   for (const u of urls){ try{ await loadScript(u); if((THREE&&THREE.GLTFLoader)||window.GLTFLoader) return; }catch(e){} }
   throw new Error('GLTFLoader missing');
 }
-
 async function ensureDRACO(){ // optional
   if ((window.THREE && THREE.DRACOLoader) || window.DRACOLoader) return;
   const urls=[
@@ -133,7 +128,7 @@ async function init(){
   scene=new THREE.Scene(); scene.background=new THREE.Color(0x000000);
 
   camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
-  camera.position.set(3.5,1.8,5);
+  camera.position.set(0, 2, 8); // start a bit farther back
 
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -142,7 +137,7 @@ async function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,1); dir.position.set(5,10,7); scene.add(dir);
 
-  // Try to load OrbitControls; if not, install a simple fallback camera.
+  // OrbitControls or fallback camera
   await ensureOrbitControls();
   let OC=null;
   if (window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
@@ -152,8 +147,8 @@ async function init(){
     controls=new OC(camera,renderer.domElement);
     controls.enableDamping=true;
   }else{
-    // Fallback camera controls: drag to orbit, wheel to zoom
-    let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=6,target=new THREE.Vector3(0,0,0);
+    // fallback: drag to orbit, wheel to zoom
+    let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=8,target=new THREE.Vector3(0,0,0);
     function updateCam(){
       const x=target.x+dist*Math.cos(phi)*Math.sin(theta);
       const y=target.y+dist*Math.sin(phi);
@@ -170,9 +165,9 @@ async function init(){
       lastX=e.clientX; lastY=e.clientY; updateCam();
     });
     renderer.domElement.addEventListener('wheel',e=>{
-      dist*= (e.deltaY>0?1.1:0.9); dist=Math.max(2,Math.min(20,dist)); updateCam();
+      dist*= (e.deltaY>0?1.1:0.9); dist=Math.max(2,30,dist); updateCam();
     },{passive:true});
-    controls={update(){}};
+    controls={target:new THREE.Vector3(), update(){}};
     showError('OrbitControls failed to load; using fallback camera (drag to rotate, wheel to zoom).');
   }
 
@@ -192,8 +187,36 @@ async function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  buildTag.textContent = `Build r10 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r11 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
+
+/* === Fit camera to the loaded model === */
+function fitCameraToObject(obj, offset=1.6){
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+
+  const maxSize = Math.max(size.x, size.y, size.z);
+  const fitHeight = maxSize / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  const fitWidth  = fitHeight / camera.aspect;
+  const distance  = offset * Math.max(fitHeight, fitWidth);
+
+  // keep current direction (or orbit target if present)
+  const currentTarget = (controls && controls.target) ? controls.target.clone() : new THREE.Vector3();
+  const dir = camera.position.clone().sub(currentTarget).normalize();
+
+  camera.position.copy(center.clone().add(dir.multiplyScalar(distance)));
+  if (controls && controls.target) {
+    controls.target.copy(center);
+    controls.minDistance = distance * 0.4;
+    controls.maxDistance = distance * 5;
+    controls.update();
+  } else {
+    camera.lookAt(center);
+  }
+  camera.updateProjectionMatrix();
+}
+/* ===================================== */
 
 function setupUI(){
   const vs=document.getElementById("vehicleSelect");
@@ -260,13 +283,16 @@ async function loadVehicle(url){
       currentVehicle=gltf.scene;
       scene.add(currentVehicle);
 
+      // normalize & scale to a consistent size
       const box=new THREE.Box3().setFromObject(currentVehicle);
       const size=new THREE.Vector3(); box.getSize(size);
       const center=new THREE.Vector3(); box.getCenter(center);
       currentVehicle.position.sub(center);
-
       const scale=4.5/Math.max(size.x,size.z||1);
       currentVehicle.scale.setScalar(scale);
+
+      // fit camera!
+      fitCameraToObject(currentVehicle, 1.7);
     },undefined,err=>{
       showError("Could not load vehicle model. Check the URL.");
     });
