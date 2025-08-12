@@ -19,19 +19,30 @@ button{cursor:pointer}
 #decalGallery button{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:0;overflow:hidden}
 #decalGallery img{width:100%;height:100%;object-fit:contain;background:#fff}
 .note{font-size:12px;opacity:.7}
-#buildTag{position:fixed;left:8px;top:6px;opacity:.8;font:12px/1 monospace;z-index:10}
+#buildTag{position:fixed;left:8px;top:6px;opacity:.85;font:12px/1 monospace;z-index:10}
 #errorTag{position:fixed;right:8px;top:6px;background:#b00020;color:#fff;padding:6px 8px;border-radius:6px;display:none;max-width:60ch;font:12px/1.2 monospace;z-index:10}
 </style>
 
-<!-- Three.js & loaders -->
+<!-- Three core -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js"></script>
-<!-- IMPORTANT: non-module DecalGeometry -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"></script>
+
+<!-- OrbitControls (with fallback) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js"
+        onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js';document.head.appendChild(s)">
+</script>
+
+<!-- GLTFLoader (with fallback) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js"
+        onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js';document.head.appendChild(s)">
+</script>
+
+<!-- DecalGeometry (non-module + fallback) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js"
+        onerror="var s=document.createElement('script');s.src='https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js';document.head.appendChild(s)">
+</script>
 </head>
 <body>
-<div id="buildTag">Build r5 • initializing…</div>
+<div id="buildTag">Build r6 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -53,7 +64,7 @@ button{cursor:pointer}
       <label for="decalUpload">Upload your decal:</label>
       <input type="file" id="decalUpload" accept="image/*">
     </div>
-    <div class="note">Click on the vehicle to place the selected decal. Drag decals to move them.</div>
+    <div class="note">Click the vehicle to place the selected decal. Drag decals to move them.</div>
   </div>
   <div id="canvasWrap"><canvas id="c"></canvas></div>
 </div>
@@ -102,8 +113,7 @@ window.onload = () => {
 
 function init(){
   const canvas=document.getElementById("c");
-  scene=new THREE.Scene();
-  scene.background=new THREE.Color(0x000000);
+  scene=new THREE.Scene(); scene.background=new THREE.Color(0x000000);
 
   camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
   camera.position.set(3.5,1.8,5);
@@ -115,8 +125,15 @@ function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0x222222,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,1); dir.position.set(5,10,7); scene.add(dir);
 
-  controls=new THREE.OrbitControls(camera,renderer.domElement);
-  controls.enableDamping=true;
+  // Robust OrbitControls setup (works even if CDN hiccups)
+  const OC = (window.THREE && THREE.OrbitControls) || window.OrbitControls;
+  if (typeof OC === 'function') {
+    controls = new OC(camera, renderer.domElement);
+    controls.enableDamping = true;
+  } else {
+    controls = { update(){} };
+    showError('OrbitControls failed to load; continuing without it.');
+  }
 
   const ground=new THREE.Mesh(
     new THREE.PlaneGeometry(50,50),
@@ -135,9 +152,7 @@ function init(){
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
   // Debug: prove CONFIG is loaded
-  console.log('Vehicles:', CONFIG.vehicles);
-  console.log('Decals:', CONFIG.decals);
-  buildTag.textContent = `Build r5 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r6 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 function setupUI(){
@@ -188,7 +203,9 @@ function clearVehicle(){
 
 function loadVehicle(url){
   clearVehicle();
-  const loader=new THREE.GLTFLoader();
+  const loader = new THREE.GLTFLoader ? new THREE.GLTFLoader() : null;
+  if(!loader){ showError('GLTFLoader missing'); return; }
+
   loader.load(url,gltf=>{
     currentVehicle=gltf.scene;
     scene.add(currentVehicle);
@@ -214,8 +231,7 @@ function applyBodyColor(hex){
       mats.forEach(m=>{
         const match=hints.some(h=>m.name&&m.name.toLowerCase().includes(h));
         if(hints.length===0||match){
-          m.color?.set(hex);
-          m.needsUpdate=true;
+          m.color?.set(hex); m.needsUpdate=true;
         }
       });
     }
@@ -255,6 +271,7 @@ function onPointerMove(event){
 }
 
 function addDecal(pos,normal,texURL){
+  if(!THREE.DecalGeometry){ showError('DecalGeometry missing; decals disabled'); return; }
   const size=new THREE.Vector3(0.6,0.6,0.01);
   const texLoader=new THREE.TextureLoader();
   const mat=new THREE.MeshStandardMaterial({
@@ -270,9 +287,11 @@ function addDecal(pos,normal,texURL){
 
 function animate(){
   requestAnimationFrame(animate);
-  controls.update();
+  if(controls && controls.update) controls.update();
   renderer.render(scene,camera);
 }
 </script>
 </body>
 </html>
+
+
