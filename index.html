@@ -24,7 +24,7 @@ button{cursor:pointer}
 .selectedDecal{outline:2px solid #4caf50}
 </style>
 
-<!-- Pin Three r159 + example scripts -->
+<!-- Pin Three r159 + legacy example scripts (no modules, no dynamic imports) -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js"></script>
@@ -77,7 +77,6 @@ const CONFIG = {
     "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
     "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
   ],
-  // body paint hints
   bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body","shell","panel","door","hood","fender","quarter","bumper"]
 };
 
@@ -91,36 +90,10 @@ let currentVehicle=null,decalTextureURL=null;
 let decals=[], draggingDecal=null, dragOffset=null;
 let vehicleMaxSize=5;
 
-/* ===== ES-module fallback shim for loaders (prevents "GLTFLoader missing") ===== */
-async function ensureLoaders() {
-  // if the legacy example scripts attached, nothing to do
-  const okGLTF  = !!(THREE && THREE.GLTFLoader);
-  const okDRACO = !!(THREE && THREE.DRACOLoader);
-  const okDecal = !!(THREE && THREE.DecalGeometry);
-  if (okGLTF && okDRACO && okDecal) return;
-
-  const base = 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm';
-  // dynamic import works in regular scripts too
-  if (!okGLTF) {
-    const gltf = await import(`${base}/loaders/GLTFLoader.js?v=159`);
-    THREE.GLTFLoader = gltf.GLTFLoader || gltf.default;
-  }
-  if (!okDRACO) {
-    try {
-      const draco = await import(`${base}/loaders/DRACOLoader.js?v=159`);
-      THREE.DRACOLoader = draco.DRACOLoader || draco.default;
-    } catch(e){ /* optional */ }
-  }
-  if (!okDecal) {
-    const decal = await import(`${base}/geometries/DecalGeometry.js?v=159`);
-    THREE.DecalGeometry = decal.DecalGeometry || decal.default;
-  }
-}
-
 /* ===== Start ===== */
-window.onload = () => { (async ()=>{ try { await init(); animate(); } catch(e){ showError('Init error: ' + e.message); } })(); };
+window.onload = () => { try { init(); animate(); } catch(e){ showError('Init error: ' + e.message); } };
 
-async function init(){
+function init(){
   const canvas=document.getElementById("c");
   scene=new THREE.Scene();
   scene.background=new THREE.Color(0xe9eaee);
@@ -136,7 +109,6 @@ async function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(5,10,7); scene.add(dir);
 
-  // Controls
   if (THREE.OrbitControls) {
     controls=new THREE.OrbitControls(camera,renderer.domElement);
     controls.enableDamping=true;
@@ -151,10 +123,6 @@ async function init(){
   raycaster=new THREE.Raycaster();
   mouse=new THREE.Vector2();
 
-  // Ensure loaders are present before any model loads
-  await ensureLoaders();
-
-  // Build UI (dropdown/decals)
   setupUI();
 
   window.addEventListener("resize",onResize);
@@ -207,7 +175,7 @@ function setupUI(){
   });
   vs.addEventListener("change",()=>loadVehicle(vs.value));
   if(CONFIG.vehicles.length){
-    loadVehicle(CONFIG.vehicles[0].url); // first load
+    loadVehicle(CONFIG.vehicles[0].url);
     vs.value=CONFIG.vehicles[0].url;
   }
 
@@ -242,11 +210,8 @@ function setupUI(){
 }
 
 /* ===== Load/position vehicle ===== */
-async function loadVehicle(url){
-  // guarantee loaders exist (legacy or shim)
-  try { await ensureLoaders(); } catch(e){ showError('GLTFLoader missing; cannot load models.'); return; }
-
-  // wipe old decals
+function loadVehicle(url){
+  // clear decals
   decals.forEach(d => { d.parent?.remove(d); d.geometry?.dispose(); if (d.material?.map) d.material.map.dispose(); d.material?.dispose(); });
   decals = [];
 
@@ -276,7 +241,7 @@ async function loadVehicle(url){
     const scale=4.5/Math.max(size0.x, size0.z || 1);
     currentVehicle.scale.setScalar(scale);
 
-    // set wheels on ground
+    // align lowest point to y=0 (wheels on ground)
     const box1=new THREE.Box3().setFromObject(currentVehicle);
     currentVehicle.position.y -= box1.min.y;
 
@@ -306,12 +271,13 @@ function applyBodyColor(hex){
 
       if(isGlass || isWheel || isLight) return;
 
+      // also color big exterior shells
       const bigMesh = (obj.geometry && obj.geometry.attributes && obj.geometry.attributes.position && obj.geometry.attributes.position.count > 5000);
 
       if(looksLikeBody || bigMesh){
         const clone = m.clone();
         clone.color = hexColor.clone();
-        clone.map = null;
+        clone.map = null; // show pure paint
         clone.metalness = (m.metalness!==undefined? m.metalness : 0.1);
         clone.roughness = (m.roughness!==undefined? m.roughness : 0.45);
         clone.transparent = false;
