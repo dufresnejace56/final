@@ -88,13 +88,28 @@ async function ensure(urls, test){
   for (const u of urls){ try{ await loadScript(u); if (test()) return; }catch(e){} }
   throw new Error('failed to load '+urls[0]);
 }
+
+/* Non-throwing OrbitControls ensure — falls back gracefully */
 async function ensureOrbitControls(){
-  await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
-    'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js',
-    'https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js'
-  ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
+  try {
+    await ensure([
+      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
+      'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js',
+      'https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js'
+    ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
+    return true;
+  } catch(e){}
+  try {
+    const { OrbitControls: OC } = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js');
+    // expose a compatible constructor
+    window.OrbitControls = function(camera, dom){ return new OC(camera, dom); };
+    return true;
+  } catch(e){
+    console.warn('OrbitControls unavailable; using fallback camera.');
+    return false; // DO NOT throw
+  }
 }
+
 async function ensureGLTFLoader(){
   await ensure([
     'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
@@ -144,10 +159,11 @@ async function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(5,10,7); scene.add(dir);
 
-  await ensureOrbitControls().catch(()=>{});
+  // Load OrbitControls but never fail init if it’s blocked
+  const ok = await ensureOrbitControls();
   let OC=null;
-  if (window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
-  else if (typeof window.OrbitControls==='function') OC=window.OrbitControls;
+  if (ok && window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
+  else if (ok && typeof window.OrbitControls==='function') OC=window.OrbitControls;
   if (OC){
     controls=new OC(camera,renderer.domElement);
     controls.enableDamping=true;
@@ -173,7 +189,6 @@ async function init(){
       dist*= (e.deltaY>0?1.1:0.9); dist=Math.max(2,30,dist); updateCam();
     },{passive:true});
     controls={target:new THREE.Vector3(), update(){}};
-    showError('OrbitControls failed to load; using fallback camera (drag to rotate, wheel to zoom).');
   }
 
   const ground=new THREE.Mesh(
@@ -382,7 +397,7 @@ function onPointerMove(event){
   }
 }
 
-/* ---- Decal placement: robust, visible, CORS-safe ---- */
+/* ---- Decal placement ---- */
 function addDecalOnHit(hit, texURL){
   const targetMesh = hit.object;
   const position   = hit.point.clone();
@@ -402,7 +417,7 @@ function addDecalOnHit(hit, texURL){
   const loader = new THREE.TextureLoader();
   loader.setCrossOrigin('anonymous');
   const tex = loader.load(texURL);
-  if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace; // nice colors
+  if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
 
   const mat = new THREE.MeshStandardMaterial({
