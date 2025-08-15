@@ -24,7 +24,7 @@ button{cursor:pointer}
 .selectedDecal{outline:2px solid #4caf50}
 </style>
 
-<!-- Pin Three r159 + example scripts (no dynamic loaders) -->
+<!-- Pin Three r159 + example scripts -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js"></script>
@@ -60,13 +60,13 @@ button{cursor:pointer}
 </div>
 
 <script>
-/* ===== CONFIG (YOUR LINKS) ===== */
+/* ===== CONFIG ===== */
 const CONFIG = {
   vehicles: [
-    { name:"Durango", url:"https://static.wixstatic.com/3d/96cc34_c0072ed49aab4a86b58e8856adc9e80d.glb" },
-    { name:"Explorer", url:"https://static.wixstatic.com/3d/96cc34_26fca487bc13404a965465fa0894bb31.glb" },            // updated
-    { name:"Mercedes (Ambulance)", url:"https://static.wixstatic.com/3d/96cc34_9fce89e6202d462eb9efb22164250445.glb" },   // updated
-    { name:"Tahoe", url:"https://static.wixstatic.com/3d/96cc34_3402bc1505d84d25a03dfdd63dc98cb5.glb" }                  // updated
+    { name:"Durango",  url:"https://static.wixstatic.com/3d/96cc34_c0072ed49aab4a86b58e8856adc9e80d.glb" },
+    { name:"Explorer", url:"https://static.wixstatic.com/3d/96cc34_26fca487bc13404a965465fa0894bb31.glb" },  // updated
+    { name:"Mercedes (Ambulance)", url:"https://static.wixstatic.com/3d/96cc34_9fce89e6202d462eb9efb22164250445.glb" }, // updated
+    { name:"Tahoe",    url:"https://static.wixstatic.com/3d/96cc34_3402bc1505d84d25a03dfdd63dc98cb5.glb" }   // updated
   ],
   decals: [
     "https://static.wixstatic.com/media/96cc34_45d6c4ae8e19430bb0f853a313752d6e~mv2.png",
@@ -77,10 +77,9 @@ const CONFIG = {
     "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
     "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
   ],
-  // names that probably belong to the painted body
+  // body paint hints
   bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body","shell","panel","door","hood","fender","quarter","bumper"]
 };
-/* ================================= */
 
 const buildTag = document.getElementById('buildTag');
 const errorTag = document.getElementById('errorTag');
@@ -90,12 +89,38 @@ function showError(msg){ errorTag.style.display='block'; errorTag.textContent = 
 let scene,camera,renderer,controls,raycaster,mouse;
 let currentVehicle=null,decalTextureURL=null;
 let decals=[], draggingDecal=null, dragOffset=null;
-let vehicleMaxSize=5; // updated after each load
+let vehicleMaxSize=5;
 
-// Start
-window.onload = () => { try { init(); animate(); } catch(e){ showError('Init error: ' + e.message); } };
+/* ===== ES-module fallback shim for loaders (prevents "GLTFLoader missing") ===== */
+async function ensureLoaders() {
+  // if the legacy example scripts attached, nothing to do
+  const okGLTF  = !!(THREE && THREE.GLTFLoader);
+  const okDRACO = !!(THREE && THREE.DRACOLoader);
+  const okDecal = !!(THREE && THREE.DecalGeometry);
+  if (okGLTF && okDRACO && okDecal) return;
 
-function init(){
+  const base = 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm';
+  // dynamic import works in regular scripts too
+  if (!okGLTF) {
+    const gltf = await import(`${base}/loaders/GLTFLoader.js?v=159`);
+    THREE.GLTFLoader = gltf.GLTFLoader || gltf.default;
+  }
+  if (!okDRACO) {
+    try {
+      const draco = await import(`${base}/loaders/DRACOLoader.js?v=159`);
+      THREE.DRACOLoader = draco.DRACOLoader || draco.default;
+    } catch(e){ /* optional */ }
+  }
+  if (!okDecal) {
+    const decal = await import(`${base}/geometries/DecalGeometry.js?v=159`);
+    THREE.DecalGeometry = decal.DecalGeometry || decal.default;
+  }
+}
+
+/* ===== Start ===== */
+window.onload = () => { (async ()=>{ try { await init(); animate(); } catch(e){ showError('Init error: ' + e.message); } })(); };
+
+async function init(){
   const canvas=document.getElementById("c");
   scene=new THREE.Scene();
   scene.background=new THREE.Color(0xe9eaee);
@@ -111,7 +136,7 @@ function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.9); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(5,10,7); scene.add(dir);
 
-  // Controls (will exist because we included the script directly)
+  // Controls
   if (THREE.OrbitControls) {
     controls=new THREE.OrbitControls(camera,renderer.domElement);
     controls.enableDamping=true;
@@ -126,7 +151,10 @@ function init(){
   raycaster=new THREE.Raycaster();
   mouse=new THREE.Vector2();
 
-  // Build UI first so it never “hangs at initializing”
+  // Ensure loaders are present before any model loads
+  await ensureLoaders();
+
+  // Build UI (dropdown/decals)
   setupUI();
 
   window.addEventListener("resize",onResize);
@@ -134,7 +162,6 @@ function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  // Show actual Three version in the tag
   buildTag.textContent = `Build r${THREE.REVISION} • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
@@ -180,7 +207,7 @@ function setupUI(){
   });
   vs.addEventListener("change",()=>loadVehicle(vs.value));
   if(CONFIG.vehicles.length){
-    loadVehicle(CONFIG.vehicles[0].url);
+    loadVehicle(CONFIG.vehicles[0].url); // first load
     vs.value=CONFIG.vehicles[0].url;
   }
 
@@ -215,7 +242,10 @@ function setupUI(){
 }
 
 /* ===== Load/position vehicle ===== */
-function loadVehicle(url){
+async function loadVehicle(url){
+  // guarantee loaders exist (legacy or shim)
+  try { await ensureLoaders(); } catch(e){ showError('GLTFLoader missing; cannot load models.'); return; }
+
   // wipe old decals
   decals.forEach(d => { d.parent?.remove(d); d.geometry?.dispose(); if (d.material?.map) d.material.map.dispose(); d.material?.dispose(); });
   decals = [];
@@ -227,7 +257,6 @@ function loadVehicle(url){
 
   const loader=new THREE.GLTFLoader();
 
-  // attach Draco (optional)
   if (THREE.DRACOLoader && loader.setDRACOLoader) {
     const dl = new THREE.DRACOLoader();
     dl.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
@@ -247,7 +276,7 @@ function loadVehicle(url){
     const scale=4.5/Math.max(size0.x, size0.z || 1);
     currentVehicle.scale.setScalar(scale);
 
-    // align lowest point to y=0 (wheels on ground)
+    // set wheels on ground
     const box1=new THREE.Box3().setFromObject(currentVehicle);
     currentVehicle.position.y -= box1.min.y;
 
@@ -257,7 +286,7 @@ function loadVehicle(url){
   });
 }
 
-/* ===== Body-only Paint (heuristic) ===== */
+/* ===== Body-only Paint (skip glass/tires/lights) ===== */
 function applyBodyColor(hex){
   if(!currentVehicle)return;
   const hints=CONFIG.bodyMaterialNameIncludes;
@@ -277,13 +306,12 @@ function applyBodyColor(hex){
 
       if(isGlass || isWheel || isLight) return;
 
-      // Also color big exterior shells
       const bigMesh = (obj.geometry && obj.geometry.attributes && obj.geometry.attributes.position && obj.geometry.attributes.position.count > 5000);
 
       if(looksLikeBody || bigMesh){
         const clone = m.clone();
         clone.color = hexColor.clone();
-        clone.map = null; // show pure paint
+        clone.map = null;
         clone.metalness = (m.metalness!==undefined? m.metalness : 0.1);
         clone.roughness = (m.roughness!==undefined? m.roughness : 0.45);
         clone.transparent = false;
@@ -298,8 +326,10 @@ function applyBodyColor(hex){
 /* ===== Decals: click to place, drag to move ===== */
 function onPointerDown(event){
   if(!renderer || !renderer.domElement) return;
-  mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
-  mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
+  const el = renderer.domElement;
+  const rect = el.getBoundingClientRect();
+  mouse.x=((event.clientX-rect.left)/rect.width)*2-1;
+  mouse.y=-((event.clientY-rect.top)/rect.height)*2+1;
   raycaster.setFromCamera(mouse,camera);
 
   // drag existing decal?
@@ -322,8 +352,10 @@ function onPointerDown(event){
 
 function onPointerMove(event){
   if(!draggingDecal)return;
-  mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
-  mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
+  const el = renderer.domElement;
+  const rect = el.getBoundingClientRect();
+  mouse.x=((event.clientX-rect.left)/rect.width)*2-1;
+  mouse.y=-((event.clientY-rect.top)/rect.height)*2+1;
   raycaster.setFromCamera(mouse,camera);
   const hits=raycaster.intersectObject(currentVehicle,true);
   if(hits.length){
