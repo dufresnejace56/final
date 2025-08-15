@@ -24,9 +24,6 @@ button{cursor:pointer}
 .selectedDecal{outline:2px solid #4caf50}
 #dropHint{position:absolute;inset:auto 12px 12px 12px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.9);font:12px/1.2 system-ui;color:#333;display:none;pointer-events:none}
 </style>
-
-<!-- Pin three r159 -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js?v=159" crossorigin="anonymous"></script>
 </head>
 <body>
 <div id="buildTag">initializing…</div>
@@ -56,7 +53,14 @@ button{cursor:pointer}
   <div id="canvasWrap"><canvas id="c"></canvas><div id="dropHint">Drop to place decal</div></div>
 </div>
 
-<script>
+<!-- Use ES modules so GLTFLoader is guaranteed present -->
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js?v=159';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js?v=159';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/GLTFLoader.js?v=159';
+import { DRACOLoader } from 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/DRACOLoader.js?v=159';
+import { DecalGeometry } from 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/geometries/DecalGeometry.js?v=159';
+
 /* ===== CONFIG ===== */
 const CONFIG = {
   vehicles: [
@@ -73,87 +77,8 @@ const CONFIG = {
     "https://static.wixstatic.com/media/96cc34_738b9da24fef4290b6e3ae9996a8e722~mv2.png",
     "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
     "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
-  ],
-  bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body","shell","panel","door","hood","fender","quarter","bumper"]
+  ]
 };
-
-const buildTag = document.getElementById('buildTag');
-const errorTag = document.getElementById('errorTag');
-function showError(msg){ errorTag.style.display='block'; errorTag.textContent = msg; console.error(msg); }
-function updateBuildTag(){
-  buildTag.textContent = `Build r${(window.THREE&&THREE.REVISION)||'??'} • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
-}
-
-/* ---------- dynamic script loaders (non-throwing controls) ---------- */
-function loadScript(url){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=url;s.onload=res;s.onerror=()=>rej(new Error('load '+url));document.head.appendChild(s);});}
-async function ensure(urls, test){
-  if (test()) return true;
-  for (const u of urls){ try{ await loadScript(u); if (test()) return true; }catch(e){} }
-  return false;
-}
-async function ensureOrbitControls(){
-  let ok = await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
-    'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js'
-  ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
-  if (ok) return true;
-  try {
-    const { OrbitControls: OC } = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js');
-    window.OrbitControls = function(camera, dom){ return new OC(camera, dom); };
-    return true;
-  } catch(e){
-    console.warn('OrbitControls unavailable; falling back to manual camera.');
-    return false; // DO NOT throw
-  }
-}
-async function ensureGLTFLoader(){
-  const ok = await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
-    'https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js'
-  ], ()=> (window.THREE && THREE.GLTFLoader) || window.GLTFLoader );
-  if (ok) return true;
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/GLTFLoader.js');
-    window.GLTFLoader = mod.GLTFLoader || mod.default;
-    window.GLTF = window.GLTFLoader;
-    return true;
-  } catch(e){
-    return false; // let loadVehicle show a friendly error
-  }
-}
-async function ensureDRACO(){
-  const ok = await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js',
-    'https://unpkg.com/three@0.159.0/examples/js/loaders/DRACOLoader.js'
-  ], ()=> (window.THREE && THREE.DRACOLoader) || window.DRACOLoader );
-  if (ok) return true;
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/DRACOLoader.js');
-    window.DRACOLoader = mod.DRACOLoader || mod.default;
-  } catch(e){ console.warn('DRACO optional and unavailable.'); }
-  return true;
-}
-async function ensureDecalGeometry(){
-  let ok = await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js',
-    'https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js'
-  ], ()=> THREE.DecalGeometry );
-  if (ok) return true;
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/geometries/DecalGeometry.js');
-    THREE.DecalGeometry = mod.DecalGeometry || mod.default;
-    return true;
-  } catch(e){ return false; }
-}
-
-/* ------------------------------------------- */
-let scene,camera,renderer,controls,raycaster,mouse;
-let currentVehicle=null,decalTextureURL=null;
-let decals=[], draggingDecal=null, dragOffset=null;
-let vehicleMaxSize=5;
-let decalTargets = [];
-let paintableMeshes = [];
-let awaitingPlacement = false;
 
 const NOT_BODY_KEYWORDS = [
   'tire','tyre','wheel','rim','hub','lug','brake','caliper','disc',
@@ -163,6 +88,23 @@ const NOT_BODY_KEYWORDS = [
   'seat','interior','license','plate','exhaust','chassis','underbody','engine'
 ];
 
+const buildTag = document.getElementById('buildTag');
+const errorTag = document.getElementById('errorTag');
+function showError(msg){ errorTag.style.display='block'; errorTag.textContent = msg; console.error(msg); }
+function updateBuildTag(){
+  buildTag.textContent = `Build r${THREE.REVISION} • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+}
+
+/* ===== State ===== */
+let scene,camera,renderer,controls,raycaster,mouse;
+let currentVehicle=null,decalTextureURL=null;
+let decals=[], draggingDecal=null, dragOffset=null;
+let vehicleMaxSize=5;
+let decalTargets = [];
+let paintableMeshes = [];
+let awaitingPlacement = false;
+
+/* ===== Helpers ===== */
 function isBodyMaterial(mat, meshName=''){
   const s = (((mat?.name)||'') + ' ' + (meshName||'')).toLowerCase();
   if (NOT_BODY_KEYWORDS.some(k=>s.includes(k))) return false;
@@ -193,12 +135,8 @@ function collectBodyMeshes(root){
   return body;
 }
 
-// Start
-window.onload = () => { (async ()=>{
-  try { await init(); animate(); }
-  catch (e) { showError('Init error: ' + e.message); }
-})(); };
-
+/* ===== Init ===== */
+init(); animate();
 async function init(){
   const canvas=document.getElementById("c");
   scene=new THREE.Scene();
@@ -210,41 +148,13 @@ async function init(){
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth-340,window.innerHeight);
-  if (renderer.outputColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.95); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,0.9); dir.position.set(5,10,7); scene.add(dir);
 
-  await ensureOrbitControls(); // never throws
-  let OC=null;
-  if (window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
-  else if (typeof window.OrbitControls==='function') OC=window.OrbitControls;
-  if (OC){
-    controls=new OC(camera,renderer.domElement);
-    controls.enableDamping=true;
-  }else{
-    // simple fallback camera
-    let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=6.0,target=new THREE.Vector3(0,0,0);
-    function updateCam(){
-      const x=target.x+dist*Math.cos(phi)*Math.sin(theta);
-      const y=target.y+dist*Math.sin(phi);
-      const z=target.z+dist*Math.cos(phi)*Math.cos(theta);
-      camera.position.set(x,y,z); camera.lookAt(target);
-    }
-    updateCam();
-    renderer.domElement.addEventListener('mousedown',e=>{isDown=true;lastX=e.clientX;lastY=e.clientY;});
-    window.addEventListener('mouseup',()=>{isDown=false;});
-    window.addEventListener('mousemove',e=>{
-      if(!isDown)return;
-      const dx=(e.clientX-lastX)/200, dy=(e.clientY-lastY)/200;
-      theta-=dx; phi+=dy; phi=Math.max(-1.2,Math.min(1.2,phi));
-      lastX=e.clientX; lastY=e.clientY; updateCam();
-    });
-    renderer.domElement.addEventListener('wheel',e=>{
-      dist*= (e.deltaY>0?1.1:0.9); dist=Math.max(2,30,dist); updateCam();
-    },{passive:true});
-    controls={target:new THREE.Vector3(), update(){}};
-  }
+  controls=new OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true;
 
   const ground=new THREE.Mesh(
     new THREE.PlaneGeometry(50,50),
@@ -266,6 +176,12 @@ async function init(){
   updateBuildTag();
 }
 
+function onResize(){
+  const w=window.innerWidth-340,h=window.innerHeight;
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w,h);
+}
+
 function fitCameraToObject(obj, offset=1.06){
   const box = new THREE.Box3().setFromObject(obj);
   const size = box.getSize(new THREE.Vector3());
@@ -276,18 +192,14 @@ function fitCameraToObject(obj, offset=1.06){
   const fitW = fitH / camera.aspect;
   const distance = offset * Math.max(fitH, fitW);
 
-  const currentTarget = (controls && controls.target) ? controls.target.clone() : new THREE.Vector3();
+  const currentTarget = controls.target.clone();
   const dir = camera.position.clone().sub(currentTarget).normalize();
 
   camera.position.copy(center.clone().add(dir.multiplyScalar(distance)));
-  if (controls && controls.target) {
-    controls.target.copy(center);
-    controls.minDistance = Math.max(0.1, distance * 0.35);
-    controls.maxDistance = distance * 4;
-    controls.update();
-  } else {
-    camera.lookAt(center);
-  }
+  controls.target.copy(center);
+  controls.minDistance = Math.max(0.1, distance * 0.35);
+  controls.maxDistance = distance * 4;
+  controls.update();
   camera.updateProjectionMatrix();
 }
 
@@ -325,12 +237,11 @@ function setupUI(){
   document.getElementById("decalUpload").addEventListener("change",e=>{
     const file=e.target.files[0]; if(!file)return;
     const objUrl = URL.createObjectURL(file);
-    const gallery=document.getElementById("decalGallery");
     const btn=document.createElement("button");
     const img=document.createElement("img");
     img.src=objUrl; img.draggable=true; img.dataset.decalUrl=objUrl;
     btn.appendChild(img);
-    gallery.prepend(btn);
+    document.getElementById("decalGallery").prepend(btn);
     btn.addEventListener("click",()=>selectDecalURL(objUrl, btn));
     img.addEventListener('dragstart', ev=>{
       ev.dataTransfer.setData('text/uri-list', objUrl);
@@ -355,12 +266,6 @@ function selectDecalURL(url, button){
   showDropHint(true, "Click the vehicle body to place the decal");
 }
 
-function onResize(){
-  const w=window.innerWidth-340,h=window.innerHeight;
-  camera.aspect=w/h; camera.updateProjectionMatrix();
-  renderer.setSize(w,h);
-}
-
 /* ===== Load/position vehicle ===== */
 async function loadVehicle(url){
   // clear decals
@@ -372,18 +277,13 @@ async function loadVehicle(url){
   paintableMeshes = [];
   decalTargets = [];
 
-  const haveGLTF = await ensureGLTFLoader(); await ensureDRACO();
-  if (!haveGLTF) { showError('GLTFLoader missing; cannot load models.'); return; }
-
-  const GLTF=(window.THREE&&THREE.GLTFLoader)||window.GLTFLoader||window.GLTF;
-  const loader=new GLTF();
-
-  const DRACO=(window.THREE&&THREE.DRACOLoader)||window.DRACOLoader;
-  if(DRACO && loader.setDRACOLoader){
-    const dl=new DRACO();
-    dl.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-    loader.setDRACOLoader(dl);
-  }
+  const loader=new GLTFLoader();
+  // Draco (optional but nice)
+  try {
+    const draco = new DRACOLoader();
+    draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+    loader.setDRACOLoader(draco);
+  } catch(e){ /* optional */ }
 
   loader.load(url,(gltf)=>{
     currentVehicle=gltf.scene;
@@ -392,10 +292,8 @@ async function loadVehicle(url){
       if(o.isMesh){
         o.castShadow = true;
         o.receiveShadow = true;
-        if (o.material) {
-          const mats = Array.isArray(o.material) ? o.material : [o.material];
-          mats.forEach(m=>{ if(m) { m.depthWrite = true; m.depthTest = true; } });
-        }
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(m=>{ if(m){ m.depthWrite = true; m.depthTest = true; } });
       }
     });
 
@@ -457,13 +355,38 @@ function applyBodyColor(hex){
   });
 }
 
-/* ===== Interaction (click place & drag decals) ===== */
+/* ===== Decals: click place & drag ===== */
+function debugHitDot(point){
+  const g = new THREE.SphereGeometry(0.02, 12, 12);
+  const m = new THREE.MeshBasicMaterial({color:0x00ff66});
+  const d = new THREE.Mesh(g,m);
+  d.position.copy(point);
+  d.renderOrder = 1000;
+  scene.add(d);
+  let t = 0;
+  const fade = ()=> {
+    t += 0.02;
+    d.material.opacity = Math.max(0, 0.8 - t);
+    d.material.transparent = true;
+    if (t < 0.8) requestAnimationFrame(fade);
+    else { scene.remove(d); g.dispose(); m.dispose(); }
+  };
+  fade();
+}
+
+const dropHint = document.getElementById('dropHint');
+function showDropHint(show, text="Drop to place decal"){
+  dropHint.textContent = text;
+  dropHint.style.display = show ? 'block' : 'none';
+}
+
 renderer?.domElement?.addEventListener;
-async function onPointerDown(event){
+function onPointerDown(event){
   mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
 
+  // drag existing?
   const decalHits=raycaster.intersectObjects(decals, true);
   if(decalHits.length){
     draggingDecal=decalHits[0].object;
@@ -472,13 +395,10 @@ async function onPointerDown(event){
     return;
   }
 
+  // place new
   if(!decalTextureURL||!currentVehicle) { showDropHint(false); return; }
 
-  const ok = await ensureDecalGeometry();
-  if(!ok){ showError('DecalGeometry missing; decals disabled.'); return; }
-
   currentVehicle.updateMatrixWorld(true);
-
   const targetSet = (decalTargets.length ? decalTargets : [currentVehicle]);
   const hits=raycaster.intersectObjects(targetSet, true);
   if(hits.length){
@@ -499,7 +419,6 @@ function onPointerMove(event){
   raycaster.setFromCamera(mouse,camera);
 
   currentVehicle.updateMatrixWorld(true);
-
   const targetSet = (decalTargets.length ? decalTargets : [currentVehicle]);
   const hits=raycaster.intersectObjects(targetSet, true);
   if(hits.length){
@@ -507,7 +426,6 @@ function onPointerMove(event){
   }
 }
 
-/* ---- Decal placement ---- */
 function addDecalOnHit(hit, texURL){
   const targetMesh = hit.object;
   const position   = hit.point.clone();
@@ -522,10 +440,9 @@ function addDecalOnHit(hit, texURL){
   const h = w;
   const d = Math.max(0.08, vehicleMaxSize * 0.35);
 
-  if (!THREE.DecalGeometry) { showError('DecalGeometry not available.'); return; }
-  const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, new THREE.Vector3(w,h,d));
+  const geo  = new DecalGeometry(targetMesh, position, orientation, new THREE.Vector3(w,h,d));
   if (!geo || !geo.attributes || !geo.attributes.position || geo.attributes.position.count === 0) {
-    console.warn('DecalGeometry produced empty geometry (skipping).');
+    console.warn('Decal produced empty geometry (skipping).');
     return;
   }
 
@@ -549,7 +466,7 @@ function addDecalOnHit(hit, texURL){
   loader.load(
     texURL,
     (tex)=>{
-      if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+      tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 8;
       const mat = new THREE.MeshStandardMaterial({
         map: tex,
@@ -575,14 +492,14 @@ function addDecalOnHit(hit, texURL){
 function setupDragAndDrop(){
   const canvas = renderer.domElement;
 
-  ;['dragenter','dragover'].forEach(evName=>{
+  ['dragenter','dragover'].forEach(evName=>{
     canvas.addEventListener(evName, e=>{
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       showDropHint(true, "Drop to place decal");
     });
   });
-  ;['dragleave','dragend','drop'].forEach(evName=>{
+  ['dragleave','dragend','drop'].forEach(evName=>{
     canvas.addEventListener(evName, e=>{
       if (evName !== 'drop') showDropHint(false);
     });
@@ -605,41 +522,13 @@ function setupDragAndDrop(){
     mouse.y = -((e.clientY - rect.top)/rect.height) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
 
-    const ok = await ensureDecalGeometry(); if(!ok){ showError('DecalGeometry missing; decals disabled.'); return; }
-
     currentVehicle.updateMatrixWorld(true);
-
     const targetSet = (decalTargets.length ? decalTargets : [currentVehicle]);
     const hits = raycaster.intersectObjects(targetSet, true);
     if (!hits.length) return;
     debugHitDot(hits[0].point);
     addDecalOnHit(hits[0], url);
   });
-}
-
-function showDropHint(show, text="Drop to place decal"){
-  const hint = document.getElementById('dropHint');
-  hint.textContent = text;
-  hint.style.display = show ? 'block' : 'none';
-}
-
-/* === tiny green dot at hit point (auto-fades) === */
-function debugHitDot(point){
-  const g = new THREE.SphereGeometry(0.02, 12, 12);
-  const m = new THREE.MeshBasicMaterial({color:0x00ff66});
-  const d = new THREE.Mesh(g,m);
-  d.position.copy(point);
-  d.renderOrder = 1000;
-  scene.add(d);
-  let t = 0;
-  const fade = ()=> {
-    t += 0.02;
-    d.material.opacity = Math.max(0, 0.8 - t);
-    d.material.transparent = true;
-    if (t < 0.8) requestAnimationFrame(fade);
-    else { scene.remove(d); g.dispose(); m.dispose(); }
-  };
-  fade();
 }
 
 /* ===== Loop ===== */
