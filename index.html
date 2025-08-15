@@ -28,7 +28,7 @@ button{cursor:pointer}
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r18 • initializing…</div>
+<div id="buildTag">Build r19 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -73,6 +73,7 @@ const CONFIG = {
     "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
     "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
   ],
+  // likely body panel names
   bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body","shell","panel","door","hood","fender","quarter","bumper"]
 };
 /* ================================= */
@@ -81,36 +82,74 @@ const buildTag = document.getElementById('buildTag');
 const errorTag = document.getElementById('errorTag');
 function showError(msg){ errorTag.style.display='block'; errorTag.textContent = msg; console.error(msg); }
 
-/* ---------- dynamic script loaders ---------- */
+/* ---------- dynamic script loaders with JSM fallbacks ---------- */
 function loadScript(url){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=url;s.onload=res;s.onerror=()=>rej(new Error('load '+url));document.head.appendChild(s);});}
 async function ensure(urls, test){
   if (test()) return;
-  for (const u of urls){ try{ await loadScript(u); if (test()) return; }catch(e){} }
+  for (const u of urls){ try{ await loadScript(u); if (test()) return; }catch(e){ /* try next */ } }
   throw new Error('failed to load '+urls[0]);
 }
+
 async function ensureOrbitControls(){
-  await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
-    'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js'
-  ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
+  try {
+    await ensure([
+      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
+      'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js'
+    ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
+    return;
+  } catch(e){}
+  try {
+    const { OrbitControls: OCClass } = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js');
+    window.OrbitControls = OCClass;
+  } catch (e) { throw new Error('OrbitControls failed to load (legacy + JSM)'); }
 }
+
 async function ensureGLTFLoader(){
-  await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
-    'https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js'
-  ], ()=> (window.THREE && THREE.GLTFLoader) || window.GLTFLoader );
+  try {
+    await ensure([
+      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
+      'https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js'
+    ], ()=> (window.THREE && THREE.GLTFLoader) || window.GLTFLoader );
+    return;
+  } catch(e){}
+  try {
+    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/GLTFLoader.js');
+    const GLTFLoaderClass = mod.GLTFLoader || mod.default;
+    window.GLTFLoader = GLTFLoaderClass;
+    window.GLTF       = GLTFLoaderClass; // keep your existing alias usage working
+  } catch (e) { throw new Error('GLTFLoader failed to load (legacy + JSM)'); }
 }
+
 async function ensureDRACO(){
-  await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js',
-    'https://unpkg.com/three@0.159.0/examples/js/loaders/DRACOLoader.js'
-  ], ()=> (window.THREE && THREE.DRACOLoader) || window.DRACOLoader ).catch(()=>{});
+  try {
+    await ensure([
+      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js',
+      'https://unpkg.com/three@0.159.0/examples/js/loaders/DRACOLoader.js'
+    ], ()=> (window.THREE && THREE.DRACOLoader) || window.DRACOLoader );
+    return;
+  } catch(e){}
+  try {
+    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/DRACOLoader.js');
+    const DRACOLoaderClass = mod.DRACOLoader || mod.default;
+    window.DRACOLoader = DRACOLoaderClass;
+  } catch (e) {
+    console.warn('DRACOLoader failed to load (legacy + JSM); continuing without Draco.');
+  }
 }
+
 async function ensureDecalGeometry(){
-  await ensure([
-    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js',
-    'https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js'
-  ], ()=> THREE.DecalGeometry );
+  try {
+    await ensure([
+      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js',
+      'https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js'
+    ], ()=> THREE.DecalGeometry );
+    return;
+  } catch(e){}
+  try {
+    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/geometries/DecalGeometry.js');
+    const DecalGeometryClass = mod.DecalGeometry || mod.default;
+    THREE.DecalGeometry = DecalGeometryClass; // attach to THREE for consistency
+  } catch (e) { throw new Error('DecalGeometry failed to load (legacy + JSM)'); }
 }
 /* ------------------------------------------- */
 
@@ -149,7 +188,7 @@ function collectBodyMeshes(root){
     if (!pass) return;
     const posAttr = o.geometry.attributes?.position;
     const triCount = posAttr ? Math.floor(posAttr.count / 3) : 0;
-    if (triCount < 150) return;
+    if (triCount < 150) return; // skip tiny bits
     body.push(o);
   });
   if (body.length === 0) {
@@ -178,7 +217,7 @@ async function init(){
   scene.background=new THREE.Color(0xe9eaee);
 
   camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
-  camera.position.set(0, 2, 6.0); // a touch closer
+  camera.position.set(0, 2, 6.0); // closer, per your feedback
 
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -188,7 +227,7 @@ async function init(){
   const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.95); scene.add(hemi);
   const dir=new THREE.DirectionalLight(0xffffff,0.9); dir.position.set(5,10,7); scene.add(dir);
 
-  await ensureOrbitControls().catch(()=>{});
+  await ensureOrbitControls();
   let OC=null;
   if (window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
   else if (typeof window.OrbitControls==='function') OC=window.OrbitControls;
@@ -196,6 +235,7 @@ async function init(){
     controls=new OC(camera,renderer.domElement);
     controls.enableDamping=true;
   }else{
+    // simple fallback camera
     let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=6.0,target=new THREE.Vector3(0,0,0);
     function updateCam(){
       const x=target.x+dist*Math.cos(phi)*Math.sin(theta);
@@ -236,7 +276,7 @@ async function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  buildTag.textContent = `Build r18 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r19 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 /* ===== Fit camera ===== */
@@ -281,14 +321,13 @@ function setupUI(){
 
   const gallery=document.getElementById("decalGallery");
   gallery.innerHTML="";
-  let lastBtn=null;
   CONFIG.decals.forEach(url=>{
     const btn=document.createElement("button");
     const img=document.createElement("img");
     img.src=url; img.draggable=true;
     img.dataset.decalUrl = url;
     btn.appendChild(img);
-    btn.addEventListener("click",()=>selectDecalURL(url, btn, ()=>lastBtn=btn));
+    btn.addEventListener("click",()=>selectDecalURL(url, btn));
     img.addEventListener('dragstart', ev=>{
       ev.dataTransfer.setData('text/uri-list', url);
       ev.dataTransfer.setData('text/plain', url);
@@ -322,11 +361,10 @@ function setupUI(){
   });
 }
 
-function selectDecalURL(url, button, setLast=()=>{}){
+function selectDecalURL(url, button){
   decalTextureURL = url;
   document.querySelectorAll('#decalGallery .selectedDecal').forEach(b=>b.classList.remove('selectedDecal'));
   if (button) button.classList.add('selectedDecal');
-  setLast();
   awaitingPlacement = true;
   showDropHint(true, "Click the vehicle body to place the decal");
 }
@@ -339,6 +377,7 @@ function onResize(){
 
 /* ===== Load/position vehicle ===== */
 async function loadVehicle(url){
+  // clear decals
   decals.forEach(d => { d.parent?.remove(d); d.geometry?.dispose(); if (d.material?.map) d.material.map.dispose(); d.material?.dispose(); });
   decals = [];
 
@@ -348,14 +387,17 @@ async function loadVehicle(url){
   decalTargets = [];
 
   try{
-    await ensureGLTFLoader(); await ensureDRACO();
-    const GLTF=(window.THREE&&THREE.GLTFLoader)||window.GLTFLoader;
+    await ensureGLTFLoader();
+    await ensureDRACO();
+
+    const GLTF=(window.THREE&&THREE.GLTFLoader)||window.GLTFLoader||window.GLTF;
     const loader=new GLTF();
+
     const DRACO=(window.THREE&&THREE.DRACOLoader)||window.DRACOLoader;
-    if(DRACO){
+    if(DRACO && loader.setDRACOLoader){
       const dl=new DRACO();
       dl.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-      if (loader.setDRACOLoader) loader.setDRACOLoader(dl);
+      loader.setDRACOLoader(dl);
     }
 
     loader.load(url,(gltf)=>{
@@ -389,7 +431,7 @@ async function loadVehicle(url){
       const box1=new THREE.Box3().setFromObject(currentVehicle);
       currentVehicle.position.y -= box1.min.y;
 
-      // build targets
+      // targets
       paintableMeshes = collectBodyMeshes(currentVehicle);
       decalTargets = paintableMeshes.slice();
 
@@ -423,8 +465,8 @@ function applyBodyColor(hex){
       if(!m) return;
       const clone = m.clone();
       clone.color = hexColor.clone();
-      clone.map   = null;
-      clone.transparent = false;
+      clone.map   = null;        // clean paint
+      clone.transparent = false; // not glass
       clone.transmission = 0;
       if (clone.metalness === undefined) clone.metalness = 0.1;
       if (clone.roughness === undefined) clone.roughness = 0.4;
@@ -441,6 +483,7 @@ async function onPointerDown(event){
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
 
+  // grab existing decal?
   const decalHits=raycaster.intersectObjects(decals, true);
   if(decalHits.length){
     draggingDecal=decalHits[0].object;
@@ -449,6 +492,7 @@ async function onPointerDown(event){
     return;
   }
 
+  // place new
   if(!decalTextureURL||!currentVehicle) { showDropHint(false); return; }
 
   try{ await ensureDecalGeometry(); }catch(e){ showError('DecalGeometry missing; decals disabled.'); return; }
@@ -483,7 +527,7 @@ function onPointerMove(event){
   }
 }
 
-/* ---- Decal placement: robust, deeper volume, placeholder visible immediately ---- */
+/* ---- Decal placement: deep projection + placeholder ---- */
 function addDecalOnHit(hit, texURL){
   const targetMesh = hit.object;
   const position   = hit.point.clone();
@@ -496,7 +540,7 @@ function addDecalOnHit(hit, texURL){
 
   const w = Math.max(0.35, vehicleMaxSize * 0.20);
   const h = w;
-  const d = Math.max(0.08, vehicleMaxSize * 0.35); // deeper to avoid empty decals
+  const d = Math.max(0.08, vehicleMaxSize * 0.35); // deeper volume
 
   if (!THREE.DecalGeometry) { showError('DecalGeometry not available.'); return; }
   const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, new THREE.Vector3(w,h,d));
@@ -626,3 +670,4 @@ function animate(){
 </script>
 </body>
 </html>
+
