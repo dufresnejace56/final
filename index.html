@@ -27,7 +27,7 @@ button{cursor:pointer}
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r14 • initializing…</div>
+<div id="buildTag">Build r15 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -49,7 +49,7 @@ button{cursor:pointer}
       <label for="decalUpload">Upload your decal:</label>
       <input type="file" id="decalUpload" accept="image/*">
     </div>
-    <div class="note">Click a decal, then click on the vehicle to place it. Drag decals to move them.</div>
+    <div class="note">Click a decal, then click on the vehicle body to place it. Drag decals to move them.</div>
   </div>
   <div id="canvasWrap"><canvas id="c"></canvas></div>
 </div>
@@ -72,8 +72,8 @@ const CONFIG = {
     "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
     "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
   ],
-  // names that probably belong to the painted body
-  bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body"]
+  // names likely on the painted body
+  bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body","shell","panel","door","hood","fender","quarter"]
 };
 /* ================================= */
 
@@ -121,20 +121,36 @@ let scene,camera,renderer,controls,raycaster,mouse;
 let currentVehicle=null,decalTextureURL=null;
 let decals=[], draggingDecal=null, dragOffset=null;
 let vehicleMaxSize=5; // updated after each load
+let decalTargets = []; // body-only meshes for decals
 
-// >>> ADDED: stricter filter to avoid coloring tires/rims/lights/glass
+// strict filter: DO NOT paint tires, rims, glass, or lights
 const NOT_BODY_KEYWORDS = [
-  'tire','tyre','wheel','rim','hub','brake','caliper','disc','glass','window','windshield',
-  'head','tail','light','indicator','turn','lamp','led','badge','emblem','grille','chrome',
-  'rubber','mirror','trim','seat','interior','license','plate','exhaust','rim_f','rim_r'
+  // wheels/tires/brakes
+  'tire','tyre','wheel','rim','hub','lug','brake','caliper','disc',
+  // glass & windows
+  'glass','window','windshield','windscreen',
+  // lights
+  'head','tail','light','indicator','turn','lamp','led','fog','reverse',
+  // trims & non-painted bits
+  'badge','emblem','grille','chrome','rubber','mirror','trim',
+  // interior & misc
+  'seat','interior','license','plate','exhaust','chassis','underbody'
 ];
+
 function isBodyMaterial(mat, meshName=''){
   const name = ((mat?.name)||'') + ' ' + (meshName||'');
   const s = name.toLowerCase();
+
+  // hard exclude by name keywords
   if (NOT_BODY_KEYWORDS.some(k=>s.includes(k))) return false;
-  // skip obvious light materials with strong emissive
-  if (mat && mat.emissive && (mat.emissive.r>0.05||mat.emissive.g>0.05||mat.emissive.b>0.05)) return false;
-  // only PBR paint-like mats
+
+  // exclude glass/translucent
+  if (mat?.transparent || mat?.transmission > 0 || s.includes('glass')) return false;
+
+  // exclude emissive/light-like materials
+  if (mat?.emissive && (mat.emissive.r>0.05||mat.emissive.g>0.05||mat.emissive.b>0.05)) return false;
+
+  // only PBR “paintable” materials
   return mat && (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial);
 }
 
@@ -150,15 +166,15 @@ async function init(){
   scene.background=new THREE.Color(0xe9eaee);
 
   camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
-  camera.position.set(0, 2, 8);
+  camera.position.set(0, 2, 7.25); // closer by default
 
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth-340,window.innerHeight);
   if (renderer.outputColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.9); scene.add(hemi);
-  const dir=new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(5,10,7); scene.add(dir);
+  const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.95); scene.add(hemi);
+  const dir=new THREE.DirectionalLight(0xffffff,0.9); dir.position.set(5,10,7); scene.add(dir);
 
   await ensureOrbitControls().catch(()=>{});
   let OC=null;
@@ -169,7 +185,7 @@ async function init(){
     controls.enableDamping=true;
   }else{
     // simple fallback camera
-    let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=8,target=new THREE.Vector3(0,0,0);
+    let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=7.25,target=new THREE.Vector3(0,0,0);
     function updateCam(){
       const x=target.x+dist*Math.cos(phi)*Math.sin(theta);
       const y=target.y+dist*Math.sin(phi);
@@ -208,11 +224,11 @@ async function init(){
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  buildTag.textContent = `Build r14 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r15 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 /* ===== Fit camera ===== */
-function fitCameraToObject(obj, offset=1.6){
+function fitCameraToObject(obj, offset=1.2){ // closer than before
   const box = new THREE.Box3().setFromObject(obj);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -228,8 +244,8 @@ function fitCameraToObject(obj, offset=1.6){
   camera.position.copy(center.clone().add(dir.multiplyScalar(distance)));
   if (controls && controls.target) {
     controls.target.copy(center);
-    controls.minDistance = distance * 0.4;
-    controls.maxDistance = distance * 5;
+    controls.minDistance = Math.max(0.1, distance * 0.35);
+    controls.maxDistance = distance * 4;
     controls.update();
   } else {
     camera.lookAt(center);
@@ -289,6 +305,10 @@ function onResize(){
 
 /* ===== Load/position vehicle (fix ‘half under floor’) ===== */
 async function loadVehicle(url){
+  // remove existing decals when changing vehicles
+  decals.forEach(d => { d.parent?.remove(d); d.geometry?.dispose(); if (d.material?.map) d.material.map.dispose(); d.material?.dispose(); });
+  decals = [];
+
   if(currentVehicle) scene.remove(currentVehicle);
   currentVehicle=null;
 
@@ -306,7 +326,7 @@ async function loadVehicle(url){
     loader.load(url,(gltf)=>{
       currentVehicle=gltf.scene;
 
-      // >>> ADDED: ensure meshes accept raycast & proper depth (helps decals)
+      // ensure meshes are raycastable and have sane depth state
       currentVehicle.traverse(o=>{
         if(o.isMesh){
           o.castShadow = true;
@@ -320,7 +340,7 @@ async function loadVehicle(url){
 
       scene.add(currentVehicle);
 
-      // normalize to consistent size
+      // normalize to consistent size & center
       const box0=new THREE.Box3().setFromObject(currentVehicle);
       const size0=new THREE.Vector3(); box0.getSize(size0);
       const center0=new THREE.Vector3(); box0.getCenter(center0);
@@ -329,16 +349,25 @@ async function loadVehicle(url){
       const scale=4.5/Math.max(size0.x, size0.z || 1);
       currentVehicle.scale.setScalar(scale);
 
-      // >>> ADDED: slight additional “stretch/size bump”
-      currentVehicle.scale.multiplyScalar(1.18); // subtle scale-up
-      currentVehicle.position.z -= 0.35;        // bring a bit closer to camera
+      // bring a bit closer & slightly larger for readability
+      currentVehicle.scale.multiplyScalar(1.22);
+      currentVehicle.position.z -= 0.55;
 
-      // after scaling, align lowest point to y=0 (so wheels sit on ground)
+      // sit on the ground
       const box1=new THREE.Box3().setFromObject(currentVehicle);
       currentVehicle.position.y -= box1.min.y;
 
-      // >>> CHANGED: slightly closer framing
-      fitCameraToObject(currentVehicle, 1.45);
+      // Build list of decal targets = body-only meshes
+      decalTargets = [];
+      currentVehicle.traverse(o=>{
+        if (!o.isMesh || !o.material) return;
+        const mats = Array.isArray(o.material)?o.material:[o.material];
+        const paintable = mats.some(m => isBodyMaterial(m, o.name));
+        if (paintable) decalTargets.push(o);
+      });
+
+      // closer framing
+      fitCameraToObject(currentVehicle, 1.18);
 
     },undefined,err=>{
       showError("Could not load vehicle model. Check the URL.");
@@ -348,40 +377,36 @@ async function loadVehicle(url){
   }
 }
 
-/* ===== Paint body color (works even if the mesh had a texture) ===== */
+/* ===== Body-only Paint ===== */
 function applyBodyColor(hex){
-  if(!currentVehicle)return;
-
-  const hints=CONFIG.bodyMaterialNameIncludes;
-  const hexColor=new THREE.Color(hex);
+  if(!currentVehicle) return;
+  const hints = CONFIG.bodyMaterialNameIncludes.map(s=>s.toLowerCase());
+  const hexColor = new THREE.Color(hex);
 
   currentVehicle.traverse(obj=>{
     if(!obj.isMesh || !obj.material) return;
-
     const mats = Array.isArray(obj.material)?obj.material:[obj.material];
+
     mats.forEach((m,i)=>{
       if(!m) return;
-      const name=(m.name||'') + ' ' + (obj.name||'');
-      const nameLC=name.toLowerCase();
 
-      // >>> CHANGED: only paint likely body materials
-      const looksLikeBodyByName = hints.some(h=> nameLC.includes(h));
-      const passFilter = looksLikeBodyByName || isBodyMaterial(m, obj.name);
+      const nameLC = ((m.name||'') + ' ' + (obj.name||'')).toLowerCase();
+      const hinted = hints.some(h => nameLC.includes(h));
+      const pass   = hinted || isBodyMaterial(m, obj.name);
 
-      if(passFilter){
-        const clone = m.clone();
+      if(!pass) return; // skip windows, tires, lights, etc.
 
-        // keep metallic/roughness but set color; remove base map if present
-        clone.color = hexColor.clone();
-        clone.map = null;
+      const clone = m.clone();
+      clone.color = hexColor.clone();
+      clone.map = null;                 // ensure clean paint color
+      clone.transparent = false;        // not glass
+      clone.transmission = 0;
 
-        // keep clearcoat if present; otherwise set sensible defaults
-        if (clone.metalness === undefined) clone.metalness = 0.1;
-        if (clone.roughness === undefined) clone.roughness = 0.4;
+      if (clone.metalness === undefined) clone.metalness = 0.1;
+      if (clone.roughness === undefined) clone.roughness = 0.4;
 
-        clone.needsUpdate = true;
-        if(Array.isArray(obj.material)) obj.material[i]=clone; else obj.material=clone;
-      }
+      clone.needsUpdate = true;
+      if(Array.isArray(obj.material)) obj.material[i] = clone; else obj.material = clone;
     });
   });
 }
@@ -393,20 +418,21 @@ async function onPointerDown(event){
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
 
-  // grab existing decal?
-  const decalHits=raycaster.intersectObjects(decals);
+  // drag existing decal?
+  const decalHits=raycaster.intersectObjects(decals, true);
   if(decalHits.length){
     draggingDecal=decalHits[0].object;
     dragOffset=draggingDecal.position.clone().sub(decalHits[0].point);
     return;
   }
 
-  // place a new one
-  if(!decalTextureURL||!currentVehicle)return;
+  // place a new decal
+  if(!decalTextureURL||!currentVehicle) return;
 
   try{ await ensureDecalGeometry(); }catch(e){ showError('DecalGeometry missing; decals disabled.'); return; }
 
-  const hits=raycaster.intersectObject(currentVehicle,true);
+  // Only hit body meshes (pre-filtered)
+  const hits=raycaster.intersectObjects(decalTargets, true);
   if(hits.length){
     const hit=hits[0];
     addDecalOnHit(hit, decalTextureURL);
@@ -414,14 +440,16 @@ async function onPointerDown(event){
 }
 
 function onPointerMove(event){
-  if(!draggingDecal)return;
+  if(!draggingDecal) return;
   mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
-  const hits=raycaster.intersectObject(currentVehicle,true);
+
+  // drag along body surfaces only
+  const hits=raycaster.intersectObjects(decalTargets, true);
   if(hits.length){
     const hit=hits[0];
-    draggingDecal.position.copy(hit.point.add(dragOffset||new THREE.Vector3()));
+    draggingDecal.position.copy(hit.point.add(dragOffset || new THREE.Vector3()));
   }
 }
 
@@ -431,20 +459,25 @@ function addDecalOnHit(hit, texURL){
   const position   = hit.point.clone();
 
   // world-space normal
-  const normal = hit.face.normal.clone();
-  normal.transformDirection(new THREE.Matrix3().getNormalMatrix(targetMesh.matrixWorld));
+  const normal = hit.face?.normal?.clone() || new THREE.Vector3(0,0,1);
+  normal.transformDirection(new THREE.Matrix3().getNormalMatrix(targetMesh.matrixWorld)).normalize();
 
-  // orientation so +Z faces out
-  const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), normal.clone().normalize());
+  // orient so +Z faces out
+  const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), normal);
   const orientation = new THREE.Euler().setFromQuaternion(quat);
 
-  // size relative to car size (so it’s never microscopic)
-  const s = Math.max(0.2, vehicleMaxSize * 0.12); // ~12% of car length
-  const size = new THREE.Vector3(s, s, 0.01);
+  // Size relative to car; bigger default so it's clearly visible on first place
+  const s = Math.max(0.3, vehicleMaxSize * 0.18);
+  const size = new THREE.Vector3(s, s, 0.02);
 
   const loader = new THREE.TextureLoader();
-  loader.setCrossOrigin('anonymous');                 // >>> ADDED (helps CDN/bucket textures)
-  const tex = loader.load(texURL);
+  loader.setCrossOrigin('anonymous'); // helps when served from CDN/object storage
+  const tex = loader.load(
+    texURL,
+    () => { tex.needsUpdate = true; },
+    undefined,
+    (err)=> console.warn('Decal texture failed to load:', err)
+  );
   if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
 
@@ -453,17 +486,24 @@ function addDecalOnHit(hit, texURL){
     color: 0xffffff,
     transparent: true,
     opacity: 1,
-    alphaTest: 0.5,               // >>> ADDED (ensures PNG cutouts render)
+    alphaTest: 0.35,
     depthTest: true,
-    depthWrite: false,            // >>> ADDED (prevents overwriting depth buffer)
+    depthWrite: false,
     polygonOffset: true,
-    polygonOffsetFactor: -4,      // >>> ADDED (reduces z-fighting)
+    polygonOffsetFactor: -4,
     side: THREE.DoubleSide
   });
 
+  if (!THREE.DecalGeometry) { showError('DecalGeometry not available.'); return; }
+
   const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, size);
+  if (!geo || !geo.attributes || !geo.attributes.position || geo.attributes.position.count === 0) {
+    console.warn('DecalGeometry produced empty geometry (skipping).');
+    return;
+  }
+
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.renderOrder = 10;          // >>> ADDED (draw on top of body)
+  mesh.renderOrder = 10; // draw on top of body
   scene.add(mesh);
   decals.push(mesh);
 }
