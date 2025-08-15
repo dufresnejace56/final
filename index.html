@@ -22,13 +22,12 @@ button{cursor:pointer}
 #buildTag{position:fixed;left:8px;top:6px;opacity:.85;font:12px/1 monospace;z-index:10;color:#333}
 #errorTag{position:fixed;right:8px;top:6px;background:#b00020;color:#fff;padding:6px 8px;border-radius:6px;display:none;max-width:70ch;font:12px/1.2 monospace;z-index:10}
 .selectedDecal{outline:2px solid #4caf50}
-#dropHint{position:absolute;inset:auto 12px 12px 12px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.9);font:12px/1.2 system-ui;color:#333;display:none;pointer-events:none}
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
 </head>
 <body>
-<div id="buildTag">Build r19 • initializing…</div>
+<div id="buildTag">Build r14 • initializing…</div>
 <div id="errorTag"></div>
 
 <div id="app">
@@ -43,26 +42,26 @@ button{cursor:pointer}
       <button id="applyColorBtn">Apply</button>
     </div>
     <div class="row">
-      <label>Decals (click or drag onto vehicle):</label>
+      <label>Decals (click to select):</label>
       <div id="decalGallery"></div>
     </div>
     <div class="row">
       <label for="decalUpload">Upload your decal:</label>
       <input type="file" id="decalUpload" accept="image/*">
     </div>
-    <div class="note">Click a decal, then click the vehicle body to place — or drag a decal from the gallery onto the car. After placing, drag decals to move them.</div>
+    <div class="note">Click a decal, then click on the vehicle to place it. Drag decals to move them.</div>
   </div>
-  <div id="canvasWrap"><canvas id="c"></canvas><div id="dropHint">Drop to place decal</div></div>
+  <div id="canvasWrap"><canvas id="c"></canvas></div>
 </div>
 
 <script>
 /* ===== CONFIG (YOUR LINKS) ===== */
 const CONFIG = {
   vehicles: [
-    { name:"Durango",  url:"https://static.wixstatic.com/3d/96cc34_c0072ed49aab4a86b58e8856adc9e80d.glb" },
-    { name:"Explorer", url:"https://static.wixstatic.com/3d/96cc34_26fca487bc13404a965465fa0894bb31.glb" }, // updated
-    { name:"Mercedes (Ambulance)", url:"https://static.wixstatic.com/3d/96cc34_9fce89e6202d462eb9efb22164250445.glb" }, // updated
-    { name:"Tahoe",    url:"https://static.wixstatic.com/3d/96cc34_3402bc1505d84d25a03dfdd63dc98cb5.glb" } // updated
+    { name:"Durango", url:"https://static.wixstatic.com/3d/96cc34_c0072ed49aab4a86b58e8856adc9e80d.glb" },
+    { name:"Explorer", url:"https://static.wixstatic.com/3d/96cc34_26fca487bc13404a965465fa0894bb31.glb" },             // ← updated
+    { name:"Mercedes (Ambulance)", url:"https://static.wixstatic.com/3d/96cc34_9fce89e6202d462eb9efb22164250445.glb" },    // ← updated
+    { name:"Tahoe", url:"https://static.wixstatic.com/3d/96cc34_3402bc1505d84d25a03dfdd63dc98cb5.glb" }                   // ← updated
   ],
   decals: [
     "https://static.wixstatic.com/media/96cc34_45d6c4ae8e19430bb0f853a313752d6e~mv2.png",
@@ -73,8 +72,8 @@ const CONFIG = {
     "https://static.wixstatic.com/media/96cc34_cbb180b170324ffa8803f487f2c588e3~mv2.png",
     "https://static.wixstatic.com/media/96cc34_60097843bb9a4db39d54929f138ab552~mv2.png"
   ],
-  // likely body panel names
-  bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body","shell","panel","door","hood","fender","quarter","bumper"]
+  // names that probably belong to the painted body
+  bodyMaterialNameIncludes:["body","paint","carpaint","car_paint","vehicle_body"]
 };
 /* ================================= */
 
@@ -82,128 +81,46 @@ const buildTag = document.getElementById('buildTag');
 const errorTag = document.getElementById('errorTag');
 function showError(msg){ errorTag.style.display='block'; errorTag.textContent = msg; console.error(msg); }
 
-/* ---------- dynamic script loaders with JSM fallbacks ---------- */
+/* ---------- dynamic script loaders ---------- */
 function loadScript(url){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=url;s.onload=res;s.onerror=()=>rej(new Error('load '+url));document.head.appendChild(s);});}
 async function ensure(urls, test){
   if (test()) return;
-  for (const u of urls){ try{ await loadScript(u); if (test()) return; }catch(e){ /* try next */ } }
+  for (const u of urls){ try{ await loadScript(u); if (test()) return; }catch(e){} }
   throw new Error('failed to load '+urls[0]);
 }
-
 async function ensureOrbitControls(){
-  try {
-    await ensure([
-      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
-      'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js'
-    ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
-    return;
-  } catch(e){}
-  try {
-    const { OrbitControls: OCClass } = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js');
-    window.OrbitControls = OCClass;
-  } catch (e) { throw new Error('OrbitControls failed to load (legacy + JSM)'); }
+  await ensure([
+    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/controls/OrbitControls.js',
+    'https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js',
+    'https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js'
+  ], ()=> (window.THREE && THREE.OrbitControls) || window.OrbitControls );
 }
-
 async function ensureGLTFLoader(){
-  try {
-    await ensure([
-      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
-      'https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js'
-    ], ()=> (window.THREE && THREE.GLTFLoader) || window.GLTFLoader );
-    return;
-  } catch(e){}
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/GLTFLoader.js');
-    const GLTFLoaderClass = mod.GLTFLoader || mod.default;
-    window.GLTFLoader = GLTFLoaderClass;
-    window.GLTF       = GLTFLoaderClass; // keep your existing alias usage working
-  } catch (e) { throw new Error('GLTFLoader failed to load (legacy + JSM)'); }
+  await ensure([
+    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/GLTFLoader.js',
+    'https://unpkg.com/three@0.159.0/examples/js/loaders/GLTFLoader.js',
+    'https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js'
+  ], ()=> (window.THREE && THREE.GLTFLoader) || window.GLTFLoader );
 }
-
 async function ensureDRACO(){
-  try {
-    await ensure([
-      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js',
-      'https://unpkg.com/three@0.159.0/examples/js/loaders/DRACOLoader.js'
-    ], ()=> (window.THREE && THREE.DRACOLoader) || window.DRACOLoader );
-    return;
-  } catch(e){}
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/loaders/DRACOLoader.js');
-    const DRACOLoaderClass = mod.DRACOLoader || mod.default;
-    window.DRACOLoader = DRACOLoaderClass;
-  } catch (e) {
-    console.warn('DRACOLoader failed to load (legacy + JSM); continuing without Draco.');
-  }
+  await ensure([
+    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/loaders/DRACOLoader.js',
+    'https://unpkg.com/three@0.159.0/examples/js/loaders/DRACOLoader.js'
+  ], ()=> (window.THREE && THREE.DRACOLoader) || window.DRACOLoader ).catch(()=>{});
 }
-
 async function ensureDecalGeometry(){
-  try {
-    await ensure([
-      'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js',
-      'https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js'
-    ], ()=> THREE.DecalGeometry );
-    return;
-  } catch(e){}
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/geometries/DecalGeometry.js');
-    const DecalGeometryClass = mod.DecalGeometry || mod.default;
-    THREE.DecalGeometry = DecalGeometryClass; // attach to THREE for consistency
-  } catch (e) { throw new Error('DecalGeometry failed to load (legacy + JSM)'); }
+  await ensure([
+    'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/js/geometries/DecalGeometry.js',
+    'https://unpkg.com/three@0.159.0/examples/js/geometries/DecalGeometry.js',
+    'https://unpkg.com/three@0.128.0/examples/js/geometries/DecalGeometry.js'
+  ], ()=> THREE.DecalGeometry );
 }
 /* ------------------------------------------- */
 
 let scene,camera,renderer,controls,raycaster,mouse;
 let currentVehicle=null,decalTextureURL=null;
 let decals=[], draggingDecal=null, dragOffset=null;
-let vehicleMaxSize=5;
-let decalTargets = [];
-let paintableMeshes = [];
-let awaitingPlacement = false;
-
-// strict filter: DO NOT paint tires, rims, glass, or lights
-const NOT_BODY_KEYWORDS = [
-  'tire','tyre','wheel','rim','hub','lug','brake','caliper','disc',
-  'glass','window','windshield','windscreen',
-  'head','tail','light','indicator','turn','lamp','led','fog','reverse','brakelight',
-  'badge','emblem','grille','chrome','rubber','mirror','trim','antenna',
-  'seat','interior','license','plate','exhaust','chassis','underbody','engine'
-];
-
-function isBodyMaterial(mat, meshName=''){
-  const name = ((mat?.name)||'') + ' ' + (meshName||'');
-  const s = name.toLowerCase();
-  if (NOT_BODY_KEYWORDS.some(k=>s.includes(k))) return false;
-  if (mat?.transparent || mat?.opacity < 0.98 || mat?.transmission > 0) return false;
-  if (mat?.emissive && (mat.emissive.r>0.05||mat.emissive.g>0.05||mat.emissive.b>0.05)) return false;
-  return mat && (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial);
-}
-
-function collectBodyMeshes(root){
-  const body = [];
-  root.traverse(o=>{
-    if (!o.isMesh || !o.material || !o.geometry) return;
-    const mats = Array.isArray(o.material)?o.material:[o.material];
-    const pass = mats.some(m => isBodyMaterial(m, o.name));
-    if (!pass) return;
-    const posAttr = o.geometry.attributes?.position;
-    const triCount = posAttr ? Math.floor(posAttr.count / 3) : 0;
-    if (triCount < 150) return; // skip tiny bits
-    body.push(o);
-  });
-  if (body.length === 0) {
-    root.traverse(o=>{
-      if (!o.isMesh || !o.material || !o.geometry) return;
-      const mats = Array.isArray(o.material)?o.material:[o.material];
-      const s = (((mats[0]?.name)||'') + ' ' + (o.name||'')).toLowerCase();
-      const posAttr = o.geometry.attributes?.position;
-      const triCount = posAttr ? Math.floor(posAttr.count / 3) : 0;
-      const obviousBad = NOT_BODY_KEYWORDS.some(k=>s.includes(k)) || mats.some(m=>m?.transparent || m?.opacity<0.98 || m?.transmission>0);
-      if (!obviousBad && triCount >= 300) body.push(o);
-    });
-  }
-  return body;
-}
+let vehicleMaxSize=5; // updated after each load
 
 // Start
 window.onload = () => { (async ()=>{
@@ -217,17 +134,17 @@ async function init(){
   scene.background=new THREE.Color(0xe9eaee);
 
   camera=new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,0.1,2000);
-  camera.position.set(0, 2, 6.0); // closer, per your feedback
+  camera.position.set(0, 2, 8);
 
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth-340,window.innerHeight);
   if (renderer.outputColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.95); scene.add(hemi);
-  const dir=new THREE.DirectionalLight(0xffffff,0.9); dir.position.set(5,10,7); scene.add(dir);
+  const hemi=new THREE.HemisphereLight(0xffffff,0xcfd6df,0.9); scene.add(hemi);
+  const dir=new THREE.DirectionalLight(0xffffff,0.8); dir.position.set(5,10,7); scene.add(dir);
 
-  await ensureOrbitControls();
+  await ensureOrbitControls().catch(()=>{});
   let OC=null;
   if (window.THREE && typeof THREE.OrbitControls==='function') OC=THREE.OrbitControls;
   else if (typeof window.OrbitControls==='function') OC=window.OrbitControls;
@@ -236,7 +153,7 @@ async function init(){
     controls.enableDamping=true;
   }else{
     // simple fallback camera
-    let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=6.0,target=new THREE.Vector3(0,0,0);
+    let isDown=false,lastX=0,lastY=0,theta=0,phi=0,dist=8,target=new THREE.Vector3(0,0,0);
     function updateCam(){
       const x=target.x+dist*Math.cos(phi)*Math.sin(theta);
       const y=target.y+dist*Math.sin(phi);
@@ -269,18 +186,17 @@ async function init(){
   mouse=new THREE.Vector2();
 
   setupUI();
-  setupDragAndDrop();
 
   window.addEventListener("resize",onResize);
   renderer.domElement.addEventListener("pointerdown",onPointerDown);
   renderer.domElement.addEventListener("pointermove",onPointerMove);
   renderer.domElement.addEventListener("pointerup",()=>draggingDecal=null);
 
-  buildTag.textContent = `Build r19 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
+  buildTag.textContent = `Build r14 • vehicles: ${CONFIG.vehicles.length} • decals: ${CONFIG.decals.length}`;
 }
 
 /* ===== Fit camera ===== */
-function fitCameraToObject(obj, offset=1.06){
+function fitCameraToObject(obj, offset=1.6){
   const box = new THREE.Box3().setFromObject(obj);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -296,8 +212,8 @@ function fitCameraToObject(obj, offset=1.06){
   camera.position.copy(center.clone().add(dir.multiplyScalar(distance)));
   if (controls && controls.target) {
     controls.target.copy(center);
-    controls.minDistance = Math.max(0.1, distance * 0.35);
-    controls.maxDistance = distance * 4;
+    controls.minDistance = distance * 0.4;
+    controls.maxDistance = distance * 5;
     controls.update();
   } else {
     camera.lookAt(center);
@@ -321,52 +237,32 @@ function setupUI(){
 
   const gallery=document.getElementById("decalGallery");
   gallery.innerHTML="";
+  let lastBtn=null;
   CONFIG.decals.forEach(url=>{
     const btn=document.createElement("button");
     const img=document.createElement("img");
-    img.src=url; img.draggable=true;
-    img.dataset.decalUrl = url;
-    btn.appendChild(img);
-    btn.addEventListener("click",()=>selectDecalURL(url, btn));
-    img.addEventListener('dragstart', ev=>{
-      ev.dataTransfer.setData('text/uri-list', url);
-      ev.dataTransfer.setData('text/plain', url);
-      ev.dataTransfer.effectAllowed = 'copy';
+    img.src=url; btn.appendChild(img);
+    btn.addEventListener("click",()=>{
+      decalTextureURL=url;
+      if(lastBtn) lastBtn.classList.remove('selectedDecal');
+      btn.classList.add('selectedDecal'); lastBtn=btn;
     });
     gallery.appendChild(btn);
   });
 
   document.getElementById("decalUpload").addEventListener("change",e=>{
     const file=e.target.files[0]; if(!file)return;
-    const objUrl = URL.createObjectURL(file);
-    const gallery=document.getElementById("decalGallery");
-    const btn=document.createElement("button");
-    const img=document.createElement("img");
-    img.src=objUrl; img.draggable=true; img.dataset.decalUrl=objUrl;
-    btn.appendChild(img);
-    gallery.prepend(btn);
-    btn.addEventListener("click",()=>selectDecalURL(objUrl, btn));
-    img.addEventListener('dragstart', ev=>{
-      ev.dataTransfer.setData('text/uri-list', objUrl);
-      ev.dataTransfer.setData('text/plain', objUrl);
-      ev.dataTransfer.effectAllowed = 'copy';
-    });
-    selectDecalURL(objUrl, btn);
-    awaitingPlacement = true;
-    showDropHint(true, "Click the vehicle to place your uploaded decal");
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      decalTextureURL=ev.target.result;
+      document.querySelectorAll('#decalGallery .selectedDecal').forEach(b=>b.classList.remove('selectedDecal'));
+    };
+    reader.readAsDataURL(file);
   });
 
   document.getElementById("applyColorBtn").addEventListener("click",()=>{
     applyBodyColor(document.getElementById("bodyColor").value);
   });
-}
-
-function selectDecalURL(url, button){
-  decalTextureURL = url;
-  document.querySelectorAll('#decalGallery .selectedDecal').forEach(b=>b.classList.remove('selectedDecal'));
-  if (button) button.classList.add('selectedDecal');
-  awaitingPlacement = true;
-  showDropHint(true, "Click the vehicle body to place the decal");
 }
 
 function onResize(){
@@ -375,48 +271,27 @@ function onResize(){
   renderer.setSize(w,h);
 }
 
-/* ===== Load/position vehicle ===== */
+/* ===== Load/position vehicle (fix ‘half under floor’) ===== */
 async function loadVehicle(url){
-  // clear decals
-  decals.forEach(d => { d.parent?.remove(d); d.geometry?.dispose(); if (d.material?.map) d.material.map.dispose(); d.material?.dispose(); });
-  decals = [];
-
   if(currentVehicle) scene.remove(currentVehicle);
   currentVehicle=null;
-  paintableMeshes = [];
-  decalTargets = [];
 
   try{
-    await ensureGLTFLoader();
-    await ensureDRACO();
-
-    const GLTF=(window.THREE&&THREE.GLTFLoader)||window.GLTFLoader||window.GLTF;
+    await ensureGLTFLoader(); await ensureDRACO();
+    const GLTF=(window.THREE&&THREE.GLTFLoader)||window.GLTFLoader;
     const loader=new GLTF();
-
     const DRACO=(window.THREE&&THREE.DRACOLoader)||window.DRACOLoader;
-    if(DRACO && loader.setDRACOLoader){
+    if(DRACO){
       const dl=new DRACO();
       dl.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-      loader.setDRACOLoader(dl);
+      if (loader.setDRACOLoader) loader.setDRACOLoader(dl);
     }
 
     loader.load(url,(gltf)=>{
       currentVehicle=gltf.scene;
-
-      currentVehicle.traverse(o=>{
-        if(o.isMesh){
-          o.castShadow = true;
-          o.receiveShadow = true;
-          if (o.material) {
-            const mats = Array.isArray(o.material) ? o.material : [o.material];
-            mats.forEach(m=>{ if(m) { m.depthWrite = true; m.depthTest = true; } });
-          }
-        }
-      });
-
       scene.add(currentVehicle);
 
-      // normalize & center
+      // normalize to consistent size
       const box0=new THREE.Box3().setFromObject(currentVehicle);
       const size0=new THREE.Vector3(); box0.getSize(size0);
       const center0=new THREE.Vector3(); box0.getCenter(center0);
@@ -425,28 +300,11 @@ async function loadVehicle(url){
       const scale=4.5/Math.max(size0.x, size0.z || 1);
       currentVehicle.scale.setScalar(scale);
 
-      currentVehicle.scale.multiplyScalar(1.24);
-      currentVehicle.position.z -= 0.6;
-
+      // after scaling, align lowest point to y=0 (so wheels sit on ground)
       const box1=new THREE.Box3().setFromObject(currentVehicle);
       currentVehicle.position.y -= box1.min.y;
 
-      // targets
-      paintableMeshes = collectBodyMeshes(currentVehicle);
-      decalTargets = paintableMeshes.slice();
-
-      if (decalTargets.length === 0) {
-        currentVehicle.traverse(o=>{
-          if(!o.isMesh || !o.material) return;
-          const mats = Array.isArray(o.material)?o.material:[o.material];
-          const bad = mats.some(m => m?.transparent || m?.opacity<0.98 || m?.transmission>0);
-          const name = (((mats[0]?.name)||'') + ' ' + (o.name||'')).toLowerCase();
-          if (!bad && !NOT_BODY_KEYWORDS.some(k=>name.includes(k))) decalTargets.push(o);
-        });
-      }
-
-      fitCameraToObject(currentVehicle, 1.06);
-
+      fitCameraToObject(currentVehicle, 1.7);
     },undefined,err=>{
       showError("Could not load vehicle model. Check the URL.");
     });
@@ -455,211 +313,114 @@ async function loadVehicle(url){
   }
 }
 
-/* ===== Body-only Paint ===== */
+/* ===== Paint body color (works even if the mesh had a texture) ===== */
 function applyBodyColor(hex){
-  if(!currentVehicle) return;
-  const hexColor = new THREE.Color(hex);
-  paintableMeshes.forEach(obj=>{
+  if(!currentVehicle)return;
+  const hints=CONFIG.bodyMaterialNameIncludes;
+  const hexColor=new THREE.Color(hex);
+
+  currentVehicle.traverse(obj=>{
+    if(!obj.isMesh || !obj.material) return;
     const mats = Array.isArray(obj.material)?obj.material:[obj.material];
+
     mats.forEach((m,i)=>{
-      if(!m) return;
-      const clone = m.clone();
-      clone.color = hexColor.clone();
-      clone.map   = null;        // clean paint
-      clone.transparent = false; // not glass
-      clone.transmission = 0;
-      if (clone.metalness === undefined) clone.metalness = 0.1;
-      if (clone.roughness === undefined) clone.roughness = 0.4;
-      clone.needsUpdate = true;
-      if(Array.isArray(obj.material)) obj.material[i] = clone; else obj.material = clone;
+      const name=(m.name||'').toLowerCase();
+      const looksLikeBody = hints.some(h=> name.includes(h));
+      // Heuristic: also color big exterior shells (lots of vertices)
+      const bigMesh = (obj.geometry && obj.geometry.attributes && obj.geometry.attributes.position && obj.geometry.attributes.position.count > 5000);
+
+      if(looksLikeBody || bigMesh){
+        const clone = m.clone();
+        clone.color = hexColor.clone();
+        // show pure color even if original had a texture
+        clone.map = null;
+        clone.metalness = (m.metalness!==undefined? m.metalness : 0.1);
+        clone.roughness = (m.roughness!==undefined? m.roughness : 0.45);
+        clone.needsUpdate = true;
+        if(Array.isArray(obj.material)) obj.material[i]=clone; else obj.material=clone;
+      }
     });
   });
 }
 
-/* ===== Interaction (click place & drag decals) ===== */
-renderer?.domElement?.addEventListener;
+/* ===== Interaction (place & drag decals) ===== */
+renderer?.domElement?.addEventListener; // keep linter happy
 async function onPointerDown(event){
   mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
 
   // grab existing decal?
-  const decalHits=raycaster.intersectObjects(decals, true);
+  const decalHits=raycaster.intersectObjects(decals);
   if(decalHits.length){
     draggingDecal=decalHits[0].object;
     dragOffset=draggingDecal.position.clone().sub(decalHits[0].point);
-    showDropHint(false);
     return;
   }
 
-  // place new
-  if(!decalTextureURL||!currentVehicle) { showDropHint(false); return; }
+  // place a new one
+  if(!decalTextureURL||!currentVehicle)return;
 
   try{ await ensureDecalGeometry(); }catch(e){ showError('DecalGeometry missing; decals disabled.'); return; }
 
-  currentVehicle.updateMatrixWorld(true);
-
-  const targetSet = (decalTargets.length ? decalTargets : [currentVehicle]);
-  const hits=raycaster.intersectObjects(targetSet, true);
+  const hits=raycaster.intersectObject(currentVehicle,true);
   if(hits.length){
-    debugHitDot(hits[0].point);
-    addDecalOnHit(hits[0], decalTextureURL);
-    awaitingPlacement = false;
-    showDropHint(false);
+    const hit=hits[0];
+    addDecalOnHit(hit, decalTextureURL);
   }
 }
 
 function onPointerMove(event){
-  if(!draggingDecal) {
-    if (awaitingPlacement) showDropHint(true, "Click the vehicle body to place the decal");
-    return;
-  }
+  if(!draggingDecal)return;
   mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
-
-  currentVehicle.updateMatrixWorld(true);
-
-  const targetSet = (decalTargets.length ? decalTargets : [currentVehicle]);
-  const hits=raycaster.intersectObjects(targetSet, true);
+  const hits=raycaster.intersectObject(currentVehicle,true);
   if(hits.length){
-    draggingDecal.position.copy(hits[0].point.add(dragOffset || new THREE.Vector3()));
+    const hit=hits[0];
+    draggingDecal.position.copy(hit.point.add(dragOffset||new THREE.Vector3()));
   }
 }
 
-/* ---- Decal placement: deep projection + placeholder ---- */
+/* ---- Decal placement: robust, visible, CORS-safe ---- */
 function addDecalOnHit(hit, texURL){
   const targetMesh = hit.object;
   const position   = hit.point.clone();
 
-  const normal = hit.face?.normal?.clone() || new THREE.Vector3(0,0,1);
-  normal.transformDirection(new THREE.Matrix3().getNormalMatrix(targetMesh.matrixWorld)).normalize();
+  // world-space normal
+  const normal = hit.face.normal.clone();
+  normal.transformDirection(new THREE.Matrix3().getNormalMatrix(targetMesh.matrixWorld));
 
-  const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), normal);
+  // orientation so +Z faces out
+  const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), normal.clone().normalize());
   const orientation = new THREE.Euler().setFromQuaternion(quat);
 
-  const w = Math.max(0.35, vehicleMaxSize * 0.20);
-  const h = w;
-  const d = Math.max(0.08, vehicleMaxSize * 0.35); // deeper volume
-
-  if (!THREE.DecalGeometry) { showError('DecalGeometry not available.'); return; }
-  const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, new THREE.Vector3(w,h,d));
-  if (!geo || !geo.attributes || !geo.attributes.position || geo.attributes.position.count === 0) {
-    console.warn('DecalGeometry produced empty geometry (skipping).');
-    return;
-  }
-
-  const placeholderMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.85,
-    depthTest: true,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -10,
-    side: THREE.DoubleSide
-  });
-  const mesh = new THREE.Mesh(geo, placeholderMat);
-  mesh.renderOrder = 10;
-  scene.add(mesh);
-  decals.push(mesh);
+  // size relative to car size (so it’s never microscopic)
+  const s = Math.max(0.2, vehicleMaxSize * 0.12); // ~12% of car length
+  const size = new THREE.Vector3(s, s, 0.01);
 
   const loader = new THREE.TextureLoader();
   loader.setCrossOrigin('anonymous');
-  loader.load(
-    texURL,
-    (tex)=>{
-      if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 8;
-      const mat = new THREE.MeshStandardMaterial({
-        map: tex,
-        color: 0xffffff,
-        transparent: true,
-        opacity: 1,
-        alphaTest: 0.3,
-        depthTest: true,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -10,
-        side: THREE.DoubleSide
-      });
-      mesh.material.dispose();
-      mesh.material = mat;
-    },
-    undefined,
-    (err)=> console.warn('Decal texture failed to load:', err)
-  );
-}
+  const tex = loader.load(texURL);
+  if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace; // nice colors
+  tex.anisotropy = 8;
 
-/* ===== Drag-and-drop from gallery onto canvas ===== */
-function setupDragAndDrop(){
-  const canvas = renderer.domElement;
-
-  ;['dragenter','dragover'].forEach(evName=>{
-    canvas.addEventListener(evName, e=>{
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-      showDropHint(true, "Drop to place decal");
-    });
-  });
-  ;['dragleave','dragend','drop'].forEach(evName=>{
-    canvas.addEventListener(evName, e=>{
-      if (evName !== 'drop') showDropHint(false);
-    });
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex,
+    color: 0xffffff,
+    transparent: true,
+    opacity: 1,
+    depthTest: true,
+    depthWrite: false,
+    polygonOffset: true,          // avoid z-fighting
+    polygonOffsetFactor: -0.1,
+    side: THREE.DoubleSide
   });
 
-  canvas.addEventListener('drop', async e=>{
-    e.preventDefault();
-    showDropHint(false);
-    if(!currentVehicle) return;
-
-    let url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
-    if (!url && e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      url = URL.createObjectURL(file);
-    }
-    if (!url) return;
-
-    const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x = ((e.clientX - rect.left)/rect.width) * 2 - 1;
-    mouse.y = -((e.clientY - rect.top)/rect.height) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-
-    try{ await ensureDecalGeometry(); }catch(err){ showError('DecalGeometry missing; decals disabled.'); return; }
-
-    currentVehicle.updateMatrixWorld(true);
-
-    const targetSet = (decalTargets.length ? decalTargets : [currentVehicle]);
-    const hits = raycaster.intersectObjects(targetSet, true);
-    if (!hits.length) return;
-    debugHitDot(hits[0].point);
-    addDecalOnHit(hits[0], url);
-  });
-}
-
-function showDropHint(show, text="Drop to place decal"){
-  const hint = document.getElementById('dropHint');
-  hint.textContent = text;
-  hint.style.display = show ? 'block' : 'none';
-}
-
-/* === tiny green dot at hit point (auto-fades) === */
-function debugHitDot(point){
-  const g = new THREE.SphereGeometry(0.02, 12, 12);
-  const m = new THREE.MeshBasicMaterial({color:0x00ff66});
-  const d = new THREE.Mesh(g,m);
-  d.position.copy(point);
-  d.renderOrder = 1000;
-  scene.add(d);
-  let t = 0;
-  const fade = ()=> {
-    t += 0.02;
-    d.material.opacity = Math.max(0, 0.8 - t);
-    d.material.transparent = true;
-    if (t < 0.8) requestAnimationFrame(fade);
-    else { scene.remove(d); g.dispose(); m.dispose(); }
-  };
-  fade();
+  const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, size);
+  const mesh = new THREE.Mesh(geo, mat);
+  scene.add(mesh);
+  decals.push(mesh);
 }
 
 /* ===== Loop ===== */
@@ -670,4 +431,3 @@ function animate(){
 </script>
 </body>
 </html>
-
