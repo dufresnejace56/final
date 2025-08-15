@@ -122,6 +122,22 @@ let currentVehicle=null,decalTextureURL=null;
 let decals=[], draggingDecal=null, dragOffset=null;
 let vehicleMaxSize=5; // updated after each load
 
+// >>> ADDED: stricter filter to avoid coloring tires/rims/lights/glass
+const NOT_BODY_KEYWORDS = [
+  'tire','tyre','wheel','rim','hub','brake','caliper','disc','glass','window','windshield',
+  'head','tail','light','indicator','turn','lamp','led','badge','emblem','grille','chrome',
+  'rubber','mirror','trim','seat','interior','license','plate','exhaust','rim_f','rim_r'
+];
+function isBodyMaterial(mat, meshName=''){
+  const name = ((mat?.name)||'') + ' ' + (meshName||'');
+  const s = name.toLowerCase();
+  if (NOT_BODY_KEYWORDS.some(k=>s.includes(k))) return false;
+  // skip obvious light materials with strong emissive
+  if (mat && mat.emissive && (mat.emissive.r>0.05||mat.emissive.g>0.05||mat.emissive.b>0.05)) return false;
+  // only PBR paint-like mats
+  return mat && (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial);
+}
+
 // Start
 window.onload = () => { (async ()=>{
   try { await init(); animate(); }
@@ -289,6 +305,19 @@ async function loadVehicle(url){
 
     loader.load(url,(gltf)=>{
       currentVehicle=gltf.scene;
+
+      // >>> ADDED: ensure meshes accept raycast & proper depth (helps decals)
+      currentVehicle.traverse(o=>{
+        if(o.isMesh){
+          o.castShadow = true;
+          o.receiveShadow = true;
+          if (o.material) {
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m=>{ if(m) { m.depthWrite = true; m.depthTest = true; } });
+          }
+        }
+      });
+
       scene.add(currentVehicle);
 
       // normalize to consistent size
@@ -300,11 +329,17 @@ async function loadVehicle(url){
       const scale=4.5/Math.max(size0.x, size0.z || 1);
       currentVehicle.scale.setScalar(scale);
 
+      // >>> ADDED: slight additional “stretch/size bump”
+      currentVehicle.scale.multiplyScalar(1.18); // subtle scale-up
+      currentVehicle.position.z -= 0.35;        // bring a bit closer to camera
+
       // after scaling, align lowest point to y=0 (so wheels sit on ground)
       const box1=new THREE.Box3().setFromObject(currentVehicle);
       currentVehicle.position.y -= box1.min.y;
 
-      fitCameraToObject(currentVehicle, 1.7);
+      // >>> CHANGED: slightly closer framing
+      fitCameraToObject(currentVehicle, 1.45);
+
     },undefined,err=>{
       showError("Could not load vehicle model. Check the URL.");
     });
@@ -316,26 +351,34 @@ async function loadVehicle(url){
 /* ===== Paint body color (works even if the mesh had a texture) ===== */
 function applyBodyColor(hex){
   if(!currentVehicle)return;
+
   const hints=CONFIG.bodyMaterialNameIncludes;
   const hexColor=new THREE.Color(hex);
 
   currentVehicle.traverse(obj=>{
     if(!obj.isMesh || !obj.material) return;
+
     const mats = Array.isArray(obj.material)?obj.material:[obj.material];
-
     mats.forEach((m,i)=>{
-      const name=(m.name||'').toLowerCase();
-      const looksLikeBody = hints.some(h=> name.includes(h));
-      // Heuristic: also color big exterior shells (lots of vertices)
-      const bigMesh = (obj.geometry && obj.geometry.attributes && obj.geometry.attributes.position && obj.geometry.attributes.position.count > 5000);
+      if(!m) return;
+      const name=(m.name||'') + ' ' + (obj.name||'');
+      const nameLC=name.toLowerCase();
 
-      if(looksLikeBody || bigMesh){
+      // >>> CHANGED: only paint likely body materials
+      const looksLikeBodyByName = hints.some(h=> nameLC.includes(h));
+      const passFilter = looksLikeBodyByName || isBodyMaterial(m, obj.name);
+
+      if(passFilter){
         const clone = m.clone();
+
+        // keep metallic/roughness but set color; remove base map if present
         clone.color = hexColor.clone();
-        // show pure color even if original had a texture
         clone.map = null;
-        clone.metalness = (m.metalness!==undefined? m.metalness : 0.1);
-        clone.roughness = (m.roughness!==undefined? m.roughness : 0.45);
+
+        // keep clearcoat if present; otherwise set sensible defaults
+        if (clone.metalness === undefined) clone.metalness = 0.1;
+        if (clone.roughness === undefined) clone.roughness = 0.4;
+
         clone.needsUpdate = true;
         if(Array.isArray(obj.material)) obj.material[i]=clone; else obj.material=clone;
       }
@@ -344,7 +387,7 @@ function applyBodyColor(hex){
 }
 
 /* ===== Interaction (place & drag decals) ===== */
-renderer?.domElement?.addEventListener; // keep linter happy
+renderer?.domElement?.addEventListener;
 async function onPointerDown(event){
   mouse.x=(event.offsetX/renderer.domElement.clientWidth)*2-1;
   mouse.y=-(event.offsetY/renderer.domElement.clientHeight)*2+1;
@@ -382,7 +425,7 @@ function onPointerMove(event){
   }
 }
 
-/* ---- Decal placement: robust, visible, CORS‑safe ---- */
+/* ---- Decal placement: robust, visible, CORS-safe ---- */
 function addDecalOnHit(hit, texURL){
   const targetMesh = hit.object;
   const position   = hit.point.clone();
@@ -400,9 +443,9 @@ function addDecalOnHit(hit, texURL){
   const size = new THREE.Vector3(s, s, 0.01);
 
   const loader = new THREE.TextureLoader();
-  loader.setCrossOrigin('anonymous');
+  loader.setCrossOrigin('anonymous');                 // >>> ADDED (helps CDN/bucket textures)
   const tex = loader.load(texURL);
-  if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace; // nice colors
+  if (renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
 
   const mat = new THREE.MeshStandardMaterial({
@@ -410,15 +453,17 @@ function addDecalOnHit(hit, texURL){
     color: 0xffffff,
     transparent: true,
     opacity: 1,
+    alphaTest: 0.5,               // >>> ADDED (ensures PNG cutouts render)
     depthTest: true,
-    depthWrite: false,
-    polygonOffset: true,          // avoid z-fighting
-    polygonOffsetFactor: -0.1,
+    depthWrite: false,            // >>> ADDED (prevents overwriting depth buffer)
+    polygonOffset: true,
+    polygonOffsetFactor: -4,      // >>> ADDED (reduces z-fighting)
     side: THREE.DoubleSide
   });
 
   const geo  = new THREE.DecalGeometry(targetMesh, position, orientation, size);
   const mesh = new THREE.Mesh(geo, mat);
+  mesh.renderOrder = 10;          // >>> ADDED (draw on top of body)
   scene.add(mesh);
   decals.push(mesh);
 }
